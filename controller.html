@@ -151,17 +151,27 @@ body{font-family:-apple-system,system-ui,'Segoe UI',sans-serif;background:var(--
   </div>
 </div>
 
+<script>
+// Disable trickle ICE — embed all candidates in SDP so PeerJS cloud doesn't drop them
+(function(){
+  const N=window.RTCPeerConnection;if(!N||N.__p)return;
+  function wg(pc){if(pc.iceGatheringState==='complete')return Promise.resolve();return new Promise(r=>{pc.addEventListener('icegatheringstatechange',function f(){if(pc.iceGatheringState==='complete'){pc.removeEventListener('icegatheringstatechange',f);r()}})});}
+  window.RTCPeerConnection=function(c,o){
+    const pc=new N(c,o);const co=pc.createOffer.bind(pc),ca=pc.createAnswer.bind(pc),sl=pc.setLocalDescription.bind(pc);let s=false;
+    pc.createOffer=async function(o){const d=await co(o);await sl(d);s=true;await wg(pc);return pc.localDescription};
+    pc.createAnswer=async function(o){const d=await ca(o);await sl(d);s=true;await wg(pc);return pc.localDescription};
+    pc.setLocalDescription=async function(d){if(s){s=false;return}return sl(d)};
+    Object.defineProperty(pc,'onicecandidate',{set(){},get(){return null}});
+    return pc;
+  };
+  window.RTCPeerConnection.prototype=N.prototype;Object.assign(window.RTCPeerConnection,N);window.RTCPeerConnection.__p=true;
+})();
+</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
 <script>
 let peer=null,conn=null,pi={scrollY:0,scrollHeight:1,viewportHeight:1,viewportWidth:1,title:''};
 
-const ICE=[
-  {urls:'stun:stun.l.google.com:19302'},
-  {urls:'stun:stun1.l.google.com:19302'},
-  {urls:'turn:freestun.net:3478',username:'free',credential:'free'},
-  {urls:'turn:openrelay.metered.ca:80',username:'openrelayproject',credential:'openrelayproject'},
-  {urls:'turn:openrelay.metered.ca:443',username:'openrelayproject',credential:'openrelayproject'},
-];
+const ICE=[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}];
 
 // Auto-fill from URL hash (QR code scanned)
 const hash=location.hash.slice(1);
@@ -185,7 +195,7 @@ function connect(){
   peer=new Peer(undefined,{debug:0,config:{iceServers:ICE}});
 
   peer.on('open',()=>{
-    conn=peer.connect(id,{serialization:'json'});
+    conn=peer.connect(id);
 
     conn.on('open',()=>{
       document.getElementById('cs').classList.add('hide');

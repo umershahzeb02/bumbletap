@@ -8,17 +8,73 @@
 
 (() => {
   // ========== CONFIGURATION ==========
-  // Change this to your GitHub Pages URL after deploying
   const CONTROLLER_URL = 'https://umershahzeb02.github.io/remote-tab-control/controller.html';
 
   const PEER_ID = 'rc-' + Math.random().toString(36).substring(2, 10);
   const ICE_SERVERS = [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'turn:freestun.net:3478', username: 'free', credential: 'free' },
-    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
   ];
+
+  // ========== FIX: Disable trickle ICE ==========
+  // PeerJS cloud drops individual ICE candidates. This patch embeds all
+  // candidates directly into the SDP offer/answer so they travel in one
+  // reliable message instead of many unreliable ones.
+  function patchWebRTC() {
+    const Native = window.RTCPeerConnection;
+    if (!Native || Native.__patched) return;
+
+    function waitGathering(pc) {
+      if (pc.iceGatheringState === 'complete') return Promise.resolve();
+      return new Promise(r => {
+        pc.addEventListener('icegatheringstatechange', function f() {
+          if (pc.iceGatheringState === 'complete') { pc.removeEventListener('icegatheringstatechange', f); r(); }
+        });
+      });
+    }
+
+    window.RTCPeerConnection = function(config, constraints) {
+      const pc = new Native(config, constraints);
+
+      const origCreateOffer = pc.createOffer.bind(pc);
+      const origCreateAnswer = pc.createAnswer.bind(pc);
+      const origSetLD = pc.setLocalDescription.bind(pc);
+
+      let ldSet = false;
+
+      pc.createOffer = async function(opts) {
+        const offer = await origCreateOffer(opts);
+        await origSetLD(offer);
+        ldSet = true;
+        await waitGathering(pc);
+        return pc.localDescription;
+      };
+
+      pc.createAnswer = async function(opts) {
+        const answer = await origCreateAnswer(opts);
+        await origSetLD(answer);
+        ldSet = true;
+        await waitGathering(pc);
+        return pc.localDescription;
+      };
+
+      pc.setLocalDescription = async function(desc) {
+        if (ldSet) { ldSet = false; return; }
+        return origSetLD(desc);
+      };
+
+      // Suppress trickle ICE — candidates are in the SDP now
+      Object.defineProperty(pc, 'onicecandidate', { set() {}, get() { return null; } });
+
+      return pc;
+    };
+
+    window.RTCPeerConnection.prototype = Native.prototype;
+    Object.assign(window.RTCPeerConnection, Native);
+    window.RTCPeerConnection.__patched = true;
+  }
+
+  patchWebRTC();
 
   let peer = null, conn = null, connected = false;
   let phoneCursor = null, highlightEl = null;
@@ -186,36 +242,17 @@
 
   // ========== PEERJS ==========
   function startPeer() {
-    peer = new Peer(PEER_ID, { debug: 2, config: { iceServers: ICE_SERVERS } });
+    peer = new Peer(PEER_ID, { debug: 0, config: { iceServers: ICE_SERVERS } });
 
     peer.on('open', id => log('Peer ready:', id));
 
     peer.on('connection', c => {
-      log('Incoming connection, open:', c.open);
+      log('Incoming connection');
       conn = c;
-
-      // Debug — use addEventListener so PeerJS can't overwrite our handlers
-      const pc = c.peerConnection;
-      if (pc) {
-        pc.addEventListener('iceconnectionstatechange', () => log('ICE state:', pc.iceConnectionState));
-        pc.addEventListener('connectionstatechange', () => log('Conn state:', pc.connectionState));
-        pc.addEventListener('icegatheringstatechange', () => log('ICE gathering:', pc.iceGatheringState));
-        pc.addEventListener('signalingstatechange', () => log('Signaling:', pc.signalingState));
-      } else {
-        log('WARNING: peerConnection not available yet');
-      }
-
-      // Poll all states every second for debugging
-      const dbg = setInterval(() => {
-        const p = c.peerConnection;
-        if (p) log('POLL ice:', p.iceConnectionState, 'conn:', p.connectionState, 'signal:', p.signalingState, 'dc-open:', c.open);
-        if (connected) clearInterval(dbg);
-      }, 1000);
 
       const onReady = () => {
         if (connected) return;
         connected = true;
-        clearInterval(dbg);
         log('Phone connected!');
         document.getElementById('__rc-dot').classList.add('on');
         document.getElementById('__rc-stxt').textContent = 'Connected';
