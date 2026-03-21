@@ -22,7 +22,7 @@
   // Load trystero from our GitHub Pages (CORS-friendly, CSP-bypassed via loadScript)
   async function loadTrystero() {
     const base = CONTROLLER_URL.replace(/\/[^/]*$/, '');
-    const res = await fetch(base + '/trystero-nostr.min.js');
+    const res = await fetch(base + '/trystero-mqtt.min.js');
     if (!res.ok) throw new Error('Failed to fetch trystero: ' + res.status);
     const code = await res.text();
     const exp = code.match(/export\{([^}]+)\}/);
