@@ -10,37 +10,48 @@
   // ========== CONFIGURATION ==========
   const CONTROLLER_URL = 'https://umershahzeb02.github.io/remote-tab-control/controller.html';
   const ROOM_ID = 'rc-' + Math.random().toString(36).substring(2, 10);
-  const APP_ID = 'umershahzeb02-remote-tab-ctrl';
 
-  let room = null, sendCmd = null, sendState = null;
+  let room = null;
   let connected = false;
   let phoneCursor = null, highlightEl = null;
   let scrollAccX = 0, scrollAccY = 0, scrollRaf = null;
 
   function log(...a) { console.log('%c[Remote]', 'color:#6366f1;font-weight:bold', ...a); }
 
-  // Load trystero the same way the controller does (proven to work)
-  async function loadTrystero() {
-    const base = CONTROLLER_URL.replace(/\/[^/]*$/, '');
-    const res = await fetch(base + '/trystero-mqtt.min.js');
-    if (!res.ok) throw new Error('Failed to fetch trystero: ' + res.status);
-    const code = await res.text();
-    const exp = code.match(/export\{([^}]+)\}/);
-    if (!exp) throw new Error('Could not parse trystero exports');
-    const assign = exp[1].split(',').map(s => {
-      const [local,, name] = s.trim().split(/\s+/);
-      return `${name}:${local}`;
-    }).join(',');
-    new Function(code.replace(/export\{[^}]+\}/, '') + '\nwindow.__trystero={' + assign + '};')();
-    if (!window.__trystero?.joinRoom) throw new Error('Trystero failed to initialize');
+  // Bridge iframe — trystero runs inside GitHub Pages iframe (clean context)
+  let bridgeFrame = null;
+
+  function createBridge() {
+    return new Promise((resolve, reject) => {
+      const base = CONTROLLER_URL.replace(/\/[^/]*$/, '');
+      bridgeFrame = document.createElement('iframe');
+      bridgeFrame.src = base + '/bridge.html#' + ROOM_ID;
+      bridgeFrame.style.cssText = 'display:none;width:0;height:0;border:0;position:absolute';
+      document.body.appendChild(bridgeFrame);
+
+      const timeout = setTimeout(() => reject(new Error('Bridge timeout')), 15000);
+
+      window.addEventListener('message', function onMsg(e) {
+        if (e.data?.rc === 'ready') {
+          clearTimeout(timeout);
+          window.removeEventListener('message', onMsg);
+          log('Bridge ready');
+          resolve();
+        }
+        if (e.data?.rc === 'error') {
+          clearTimeout(timeout);
+          window.removeEventListener('message', onMsg);
+          reject(new Error('Bridge error: ' + e.data.msg));
+        }
+      });
+    });
   }
 
   // ========== INIT ==========
   async function init() {
     try {
       await loadScript('https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js');
-      await loadTrystero();
-      log('Scripts loaded');
+      log('QR loaded');
     } catch (e) { log('Load failed:', e); return; }
     injectStyles();
     createUI();
@@ -48,37 +59,34 @@
     startConnection();
   }
 
-  // ========== TRYSTERO CONNECTION ==========
+  // ========== CONNECTION VIA BRIDGE IFRAME ==========
   async function startConnection() {
     try {
-      const { joinRoom } = window.__trystero;
-      log('Trystero loaded, joining room:', ROOM_ID);
+      await createBridge();
+      log('Joining room:', ROOM_ID);
 
-      room = joinRoom({ appId: APP_ID }, ROOM_ID);
-
-      const [_sendCmd, onCmd] = room.makeAction('cmd');
-      const [_sendState, onState] = room.makeAction('state');
-      sendCmd = _sendCmd;
-      sendState = _sendState;
-
-      // Listen for commands from phone
-      onCmd((data) => handleCommand(data));
-
-      room.onPeerJoin((peerId) => {
-        connected = true;
-        log('Phone connected!', peerId);
-        document.getElementById('__rc-dot').classList.add('on');
-        document.getElementById('__rc-stxt').textContent = 'Connected';
-        document.getElementById('__rc-overlay').style.display = 'none';
-        sendPageInfo();
-      });
-
-      room.onPeerLeave((peerId) => {
-        connected = false;
-        document.getElementById('__rc-dot').classList.remove('on');
-        document.getElementById('__rc-stxt').textContent = 'Disconnected';
-        phoneCursor.classList.remove('v'); highlightEl.classList.remove('v');
-        log('Phone disconnected', peerId);
+      // Listen for messages from bridge iframe
+      window.addEventListener('message', (e) => {
+        if (!e.data?.rc) return;
+        switch (e.data.rc) {
+          case 'cmd': handleCommand(e.data.data); break;
+          case 'state': break; // desktop doesn't need state from phone
+          case 'peer-join':
+            connected = true;
+            log('Phone connected!', e.data.id);
+            document.getElementById('__rc-dot').classList.add('on');
+            document.getElementById('__rc-stxt').textContent = 'Connected';
+            document.getElementById('__rc-overlay').style.display = 'none';
+            sendPageInfo();
+            break;
+          case 'peer-leave':
+            connected = false;
+            document.getElementById('__rc-dot').classList.remove('on');
+            document.getElementById('__rc-stxt').textContent = 'Disconnected';
+            phoneCursor.classList.remove('v'); highlightEl.classList.remove('v');
+            log('Phone disconnected', e.data.id);
+            break;
+        }
       });
 
       log('Waiting for phone...');
@@ -88,9 +96,9 @@
     }
   }
 
-  // ========== SAFE SEND ==========
+  // ========== SAFE SEND (via bridge iframe) ==========
   function send(d) {
-    try { if (connected && sendCmd) sendCmd(d); } catch (e) { log('Send err:', e.message); }
+    try { if (connected && bridgeFrame) bridgeFrame.contentWindow.postMessage({ rc: 'send-cmd', data: d }, '*'); } catch (e) { log('Send err:', e.message); }
   }
 
   function sendPageInfo() {
@@ -101,7 +109,7 @@
       viewportHeight: window.innerHeight,
       viewportWidth: window.innerWidth,
     };
-    try { if (connected && sendState) sendState(info); } catch (e) { log('Send err:', e.message); }
+    try { if (connected && bridgeFrame) bridgeFrame.contentWindow.postMessage({ rc: 'send-state', data: info }, '*'); } catch (e) { log('Send err:', e.message); }
   }
 
   // ========== STYLES ==========

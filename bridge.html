@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>RC Bridge</title></head>
+<body>
+<script>
+const APP_ID = 'umershahzeb02-remote-tab-ctrl';
+const roomId = location.hash.slice(1);
+if (!roomId) { console.error('No room ID'); }
+
+let room, sendCmd, sendState;
+
+(async () => {
+  try {
+    // Load trystero normally
+    const res = await fetch('./trystero-mqtt.min.js');
+    const code = await res.text();
+    const exp = code.match(/export\{([^}]+)\}/);
+    const assign = exp[1].split(',').map(s => {
+      const [l,,n] = s.trim().split(/\s+/);
+      return n + ':' + l;
+    }).join(',');
+    new Function(code.replace(/export\{[^}]+\}/, '') + '\nwindow.__trystero={' + assign + '};')();
+
+    const { joinRoom } = window.__trystero;
+    room = joinRoom({ appId: APP_ID }, roomId);
+
+    const [_sendCmd, onCmd] = room.makeAction('cmd');
+    const [_sendState, onState] = room.makeAction('state');
+    sendCmd = _sendCmd;
+    sendState = _sendState;
+
+    // Relay commands from phone to parent page
+    onCmd((data) => parent.postMessage({ rc: 'cmd', data }, '*'));
+    onState((data) => parent.postMessage({ rc: 'state', data }, '*'));
+
+    room.onPeerJoin((id) => parent.postMessage({ rc: 'peer-join', id }, '*'));
+    room.onPeerLeave((id) => parent.postMessage({ rc: 'peer-leave', id }, '*'));
+
+    // Relay messages from parent page to phone
+    window.addEventListener('message', (e) => {
+      if (!e.data?.rc) return;
+      if (e.data.rc === 'send-cmd' && sendCmd) sendCmd(e.data.data);
+      if (e.data.rc === 'send-state' && sendState) sendState(e.data.data);
+    });
+
+    parent.postMessage({ rc: 'ready' }, '*');
+  } catch (e) {
+    parent.postMessage({ rc: 'error', msg: e.message }, '*');
+  }
+})();
+</script>
+</body>
+</html>
