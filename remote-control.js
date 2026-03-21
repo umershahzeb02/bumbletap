@@ -15,9 +15,9 @@
   const ICE_SERVERS = [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun3.l.google.com:19302' },
-    { urls: 'stun:stun4.l.google.com:19302' },
+    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turns:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
   ];
 
   let peer = null, conn = null, connected = false;
@@ -26,14 +26,14 @@
 
   function log(...a) { console.log('%c[Remote]', 'color:#6366f1;font-weight:bold', ...a); }
 
-  function loadScript(url) {
-    return new Promise((res, rej) => {
-      if (document.querySelector(`script[src="${url}"]`)) return res();
-      const s = document.createElement('script');
-      s.src = url; s.onload = res; s.onerror = rej;
-      document.head.appendChild(s);
-    });
-  }
+  // function loadScript(url) {
+  //   return new Promise((res, rej) => {
+  //     if (document.querySelector(`script[src="${url}"]`)) return res();
+  //     const s = document.createElement('script');
+  //     s.src = url; s.onload = res; s.onerror = rej;
+  //     document.head.appendChild(s);
+  //   });
+  // }
 
   // ========== INIT ==========
   async function init() {
