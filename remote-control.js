@@ -27,8 +27,9 @@
     function waitGathering(pc) {
       if (pc.iceGatheringState === 'complete') return Promise.resolve();
       return new Promise(r => {
+        const t = setTimeout(() => { log('ICE gathering timeout, proceeding'); r(); }, 5000);
         pc.addEventListener('icegatheringstatechange', function f() {
-          if (pc.iceGatheringState === 'complete') { pc.removeEventListener('icegatheringstatechange', f); r(); }
+          if (pc.iceGatheringState === 'complete') { clearTimeout(t); pc.removeEventListener('icegatheringstatechange', f); r(); }
         });
       });
     }

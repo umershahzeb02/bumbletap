@@ -155,11 +155,19 @@ body{font-family:-apple-system,system-ui,'Segoe UI',sans-serif;background:var(--
 // Disable trickle ICE — embed all candidates in SDP so PeerJS cloud doesn't drop them
 (function(){
   const N=window.RTCPeerConnection;if(!N||N.__p)return;
-  function wg(pc){if(pc.iceGatheringState==='complete')return Promise.resolve();return new Promise(r=>{pc.addEventListener('icegatheringstatechange',function f(){if(pc.iceGatheringState==='complete'){pc.removeEventListener('icegatheringstatechange',f);r()}})});}
+  function wg(pc){
+    if(pc.iceGatheringState==='complete')return Promise.resolve();
+    return new Promise(r=>{
+      const t=setTimeout(()=>{console.log('[ICE] gathering timeout, proceeding');r()},5000);
+      pc.addEventListener('icegatheringstatechange',function f(){
+        if(pc.iceGatheringState==='complete'){clearTimeout(t);pc.removeEventListener('icegatheringstatechange',f);r()}
+      });
+    });
+  }
   window.RTCPeerConnection=function(c,o){
     const pc=new N(c,o);const co=pc.createOffer.bind(pc),ca=pc.createAnswer.bind(pc),sl=pc.setLocalDescription.bind(pc);let s=false;
-    pc.createOffer=async function(o){const d=await co(o);await sl(d);s=true;await wg(pc);return pc.localDescription};
-    pc.createAnswer=async function(o){const d=await ca(o);await sl(d);s=true;await wg(pc);return pc.localDescription};
+    pc.createOffer=async function(o){console.log('[ICE] createOffer start');const d=await co(o);await sl(d);s=true;await wg(pc);console.log('[ICE] createOffer done');return pc.localDescription};
+    pc.createAnswer=async function(o){console.log('[ICE] createAnswer start');const d=await ca(o);await sl(d);s=true;await wg(pc);console.log('[ICE] createAnswer done');return pc.localDescription};
     pc.setLocalDescription=async function(d){if(s){s=false;return}return sl(d)};
     Object.defineProperty(pc,'onicecandidate',{set(){},get(){return null}});
     return pc;
@@ -192,9 +200,11 @@ function connect(){
   btn.disabled=true;btn.textContent='Connecting...';
   document.getElementById('errMsg').textContent='';
 
+  document.getElementById('errMsg').textContent='Connecting to cloud...';
   peer=new Peer(undefined,{debug:0,config:{iceServers:ICE}});
 
   peer.on('open',()=>{
+    document.getElementById('errMsg').textContent='Cloud OK. Reaching desktop...';
     conn=peer.connect(id);
 
     conn.on('open',()=>{
