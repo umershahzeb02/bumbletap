@@ -158,9 +158,9 @@ let peer=null,conn=null,pi={scrollY:0,scrollHeight:1,viewportHeight:1,viewportWi
 const ICE=[
   {urls:'stun:stun.l.google.com:19302'},
   {urls:'stun:stun1.l.google.com:19302'},
+  {urls:'turn:freestun.net:3478',username:'free',credential:'free'},
   {urls:'turn:openrelay.metered.ca:80',username:'openrelayproject',credential:'openrelayproject'},
   {urls:'turn:openrelay.metered.ca:443',username:'openrelayproject',credential:'openrelayproject'},
-  {urls:'turns:openrelay.metered.ca:443',username:'openrelayproject',credential:'openrelayproject'},
 ];
 
 // Auto-fill from URL hash (QR code scanned)
@@ -185,7 +185,7 @@ function connect(){
   peer=new Peer(undefined,{debug:0,config:{iceServers:ICE}});
 
   peer.on('open',()=>{
-    conn=peer.connect(id,{reliable:true});
+    conn=peer.connect(id);
 
     conn.on('open',()=>{
       document.getElementById('cs').classList.add('hide');

@@ -15,9 +15,9 @@
   const ICE_SERVERS = [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'turn:freestun.net:3478', username: 'free', credential: 'free' },
     { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
     { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turns:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
   ];
 
   let peer = null, conn = null, connected = false;
@@ -186,13 +186,20 @@
 
   // ========== PEERJS ==========
   function startPeer() {
-    peer = new Peer(PEER_ID, { debug: 0, config: { iceServers: ICE_SERVERS } });
+    peer = new Peer(PEER_ID, { debug: 2, config: { iceServers: ICE_SERVERS } });
 
     peer.on('open', id => log('Peer ready:', id));
 
     peer.on('connection', c => {
       log('Incoming connection, open:', c.open);
       conn = c;
+
+      // Debug ICE state
+      if (c.peerConnection) {
+        c.peerConnection.oniceconnectionstatechange = () => log('ICE state:', c.peerConnection.iceConnectionState);
+        c.peerConnection.onconnectionstatechange = () => log('Conn state:', c.peerConnection.connectionState);
+        c.peerConnection.onicegatheringstatechange = () => log('ICE gathering:', c.peerConnection.iceGatheringState);
+      }
 
       const onReady = () => {
         if (connected) return;
