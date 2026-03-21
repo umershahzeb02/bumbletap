@@ -9,7 +9,7 @@
 (() => {
   // ========== CONFIGURATION ==========
   // Change this to your GitHub Pages URL after deploying
-  const CONTROLLER_URL = 'https://YOURUSERNAME.github.io/remote-tab-control/controller.html';
+  const CONTROLLER_URL = 'https://umershahzeb02.github.io/remote-tab-control/controller.html';
 
   const PEER_ID = 'rc-' + Math.random().toString(36).substring(2, 10);
   const ICE_SERVERS = [
