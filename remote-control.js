@@ -19,10 +19,29 @@
 
   function log(...a) { console.log('%c[Remote]', 'color:#6366f1;font-weight:bold', ...a); }
 
+  // Load trystero ESM as a global via blob URL (bypasses CSP since blob: is allowed)
+  async function loadTrystero() {
+    const res = await fetch('https://github.com/dmotz/trystero/releases/latest/download/trystero-torrent.min.js');
+    const code = await res.text();
+    const exp = code.match(/export\{([^}]+)\}/);
+    if (!exp) throw new Error('Could not parse trystero exports');
+    // Parse "Y as joinRoom, s as selfId, ..." into {joinRoom: Y, selfId: s, ...}
+    const assign = exp[1].split(',').map(s => {
+      const [local,, name] = s.trim().split(/\s+/);
+      return `${name}:${local}`;
+    }).join(',');
+    const wrapped = code.replace(/export\{[^}]+\}/, '') + `\nwindow.__trystero={${assign}};`;
+    const blob = new Blob([wrapped], { type: 'text/javascript' });
+    const url = URL.createObjectURL(blob);
+    await loadScript(url);
+    URL.revokeObjectURL(url);
+  }
+
   // ========== INIT ==========
   async function init() {
     try {
       await loadScript('https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js');
+      await loadTrystero();
       log('Scripts loaded');
     } catch (e) { log('Load failed:', e); return; }
     injectStyles();
@@ -34,7 +53,7 @@
   // ========== TRYSTERO CONNECTION ==========
   async function startConnection() {
     try {
-      const { joinRoom } = await import('https://esm.run/trystero/torrent');
+      const { joinRoom } = window.__trystero;
       log('Trystero loaded, joining room:', ROOM_ID);
 
       room = joinRoom({ appId: APP_ID }, ROOM_ID);
