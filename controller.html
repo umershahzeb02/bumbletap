@@ -185,7 +185,7 @@ function connect(){
   peer=new Peer(undefined,{debug:0,config:{iceServers:ICE}});
 
   peer.on('open',()=>{
-    conn=peer.connect(id);
+    conn=peer.connect(id,{serialization:'json'});
 
     conn.on('open',()=>{
       document.getElementById('cs').classList.add('hide');

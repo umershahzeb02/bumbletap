@@ -194,16 +194,28 @@
       log('Incoming connection, open:', c.open);
       conn = c;
 
-      // Debug ICE state
-      if (c.peerConnection) {
-        c.peerConnection.oniceconnectionstatechange = () => log('ICE state:', c.peerConnection.iceConnectionState);
-        c.peerConnection.onconnectionstatechange = () => log('Conn state:', c.peerConnection.connectionState);
-        c.peerConnection.onicegatheringstatechange = () => log('ICE gathering:', c.peerConnection.iceGatheringState);
+      // Debug — use addEventListener so PeerJS can't overwrite our handlers
+      const pc = c.peerConnection;
+      if (pc) {
+        pc.addEventListener('iceconnectionstatechange', () => log('ICE state:', pc.iceConnectionState));
+        pc.addEventListener('connectionstatechange', () => log('Conn state:', pc.connectionState));
+        pc.addEventListener('icegatheringstatechange', () => log('ICE gathering:', pc.iceGatheringState));
+        pc.addEventListener('signalingstatechange', () => log('Signaling:', pc.signalingState));
+      } else {
+        log('WARNING: peerConnection not available yet');
       }
+
+      // Poll all states every second for debugging
+      const dbg = setInterval(() => {
+        const p = c.peerConnection;
+        if (p) log('POLL ice:', p.iceConnectionState, 'conn:', p.connectionState, 'signal:', p.signalingState, 'dc-open:', c.open);
+        if (connected) clearInterval(dbg);
+      }, 1000);
 
       const onReady = () => {
         if (connected) return;
         connected = true;
+        clearInterval(dbg);
         log('Phone connected!');
         document.getElementById('__rc-dot').classList.add('on');
         document.getElementById('__rc-stxt').textContent = 'Connected';
@@ -213,12 +225,12 @@
 
       c.on('open', onReady);
 
-      // Fallback poll — PeerJS sometimes fires 'connection' with open already true
+      // Fallback poll
       let polls = 0;
       const pt = setInterval(() => {
         polls++;
         if (c.open && !connected) { clearInterval(pt); onReady(); }
-        if (polls > 30 || connected) clearInterval(pt);
+        if (polls > 60 || connected) clearInterval(pt);
       }, 200);
 
       c.on('data', handleCommand);
