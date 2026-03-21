@@ -18,16 +18,18 @@
 
   function log(...a) { console.log('%c[Remote]', 'color:#6366f1;font-weight:bold', ...a); }
 
-  // Bridge iframe — trystero runs inside GitHub Pages iframe (clean context)
-  let bridgeFrame = null;
+  // Bridge popup — trystero runs in a small popup window (iframes restrict WebRTC)
+  let bridgeWin = null;
 
   function createBridge() {
     return new Promise((resolve, reject) => {
       const base = CONTROLLER_URL.replace(/\/[^/]*$/, '');
-      bridgeFrame = document.createElement('iframe');
-      bridgeFrame.src = base + '/bridge.html#' + ROOM_ID;
-      bridgeFrame.style.cssText = 'display:none;width:0;height:0;border:0;position:absolute';
-      document.body.appendChild(bridgeFrame);
+      bridgeWin = window.open(base + '/bridge.html#' + ROOM_ID, '_rc_bridge', 'width=1,height=1,left=-100,top=-100');
+
+      if (!bridgeWin) {
+        reject(new Error('Popup blocked — allow popups for this site'));
+        return;
+      }
 
       const timeout = setTimeout(() => reject(new Error('Bridge timeout')), 15000);
 
@@ -98,7 +100,7 @@
 
   // ========== SAFE SEND (via bridge iframe) ==========
   function send(d) {
-    try { if (connected && bridgeFrame) bridgeFrame.contentWindow.postMessage({ rc: 'send-cmd', data: d }, '*'); } catch (e) { log('Send err:', e.message); }
+    try { if (connected && bridgeWin) bridgeWin.postMessage({ rc: 'send-cmd', data: d }, '*'); } catch (e) { log('Send err:', e.message); }
   }
 
   function sendPageInfo() {
@@ -109,7 +111,7 @@
       viewportHeight: window.innerHeight,
       viewportWidth: window.innerWidth,
     };
-    try { if (connected && bridgeFrame) bridgeFrame.contentWindow.postMessage({ rc: 'send-state', data: info }, '*'); } catch (e) { log('Send err:', e.message); }
+    try { if (connected && bridgeWin) bridgeWin.postMessage({ rc: 'send-state', data: info }, '*'); } catch (e) { log('Send err:', e.message); }
   }
 
   // ========== STYLES ==========
@@ -327,7 +329,7 @@
 
   // ========== KEEPALIVE ==========
   setInterval(() => { if (connected) send({ type: 'heartbeat' }); }, 5000);
-  window.addEventListener('beforeunload', () => { send({ type: 'tab-closing' }); if (room) room.leave(); });
+  window.addEventListener('beforeunload', () => { send({ type: 'tab-closing' }); if (bridgeWin) bridgeWin.close(); });
 
   init();
 })();

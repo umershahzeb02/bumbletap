@@ -29,11 +29,11 @@ let room, sendCmd, sendState;
     sendState = _sendState;
 
     // Relay commands from phone to parent page
-    onCmd((data) => parent.postMessage({ rc: 'cmd', data }, '*'));
-    onState((data) => parent.postMessage({ rc: 'state', data }, '*'));
+    onCmd((data) => (opener||parent).postMessage({ rc: 'cmd', data }, '*'));
+    onState((data) => (opener||parent).postMessage({ rc: 'state', data }, '*'));
 
-    room.onPeerJoin((id) => parent.postMessage({ rc: 'peer-join', id }, '*'));
-    room.onPeerLeave((id) => parent.postMessage({ rc: 'peer-leave', id }, '*'));
+    room.onPeerJoin((id) => (opener||parent).postMessage({ rc: 'peer-join', id }, '*'));
+    room.onPeerLeave((id) => (opener||parent).postMessage({ rc: 'peer-leave', id }, '*'));
 
     // Relay messages from parent page to phone
     window.addEventListener('message', (e) => {
@@ -42,9 +42,9 @@ let room, sendCmd, sendState;
       if (e.data.rc === 'send-state' && sendState) sendState(e.data.data);
     });
 
-    parent.postMessage({ rc: 'ready' }, '*');
+    (opener||parent).postMessage({ rc: 'ready' }, '*');
   } catch (e) {
-    parent.postMessage({ rc: 'error', msg: e.message }, '*');
+    (opener||parent).postMessage({ rc: 'error', msg: e.message }, '*');
   }
 })();
 </script>
