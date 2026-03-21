@@ -185,10 +185,7 @@ async function connect(){
     const code=await res.text();
     const exp=code.match(/export\{([^}]+)\}/);
     const assign=exp[1].split(',').map(s=>{const[l,,n]=s.trim().split(/\s+/);return n+':'+l}).join(',');
-    const blob=new Blob([code.replace(/export\{[^}]+\}/,'')+'\nwindow.__trystero={'+assign+'};'],{type:'text/javascript'});
-    const burl=URL.createObjectURL(blob);
-    await new Promise((ok,fail)=>{const s=document.createElement('script');s.src=burl;s.onload=ok;s.onerror=fail;document.head.appendChild(s)});
-    URL.revokeObjectURL(burl);
+    (0,eval)(code.replace(/export\{[^}]+\}/,'')+'\nwindow.__trystero={'+assign+'};');
     const {joinRoom}=window.__trystero;
 
     status.textContent='Joining room, finding desktop...';
