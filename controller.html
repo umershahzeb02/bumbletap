@@ -153,7 +153,7 @@ body{font-family:-apple-system,system-ui,'Segoe UI',sans-serif;background:var(--
   </div>
 </div>
 
-<script type="module">
+<script>
 const APP_ID = 'umershahzeb02-remote-tab-ctrl';
 
 let room=null,sendCmd=null,sendState=null;
@@ -180,7 +180,16 @@ async function connect(){
 
   try {
     status.textContent='Loading trystero...';
-    const {joinRoom}=await import('https://esm.run/trystero/torrent');
+    // Load bundled trystero from same origin
+    const res=await fetch('./trystero-torrent.min.js');
+    const code=await res.text();
+    const exp=code.match(/export\{([^}]+)\}/);
+    const assign=exp[1].split(',').map(s=>{const[l,,n]=s.trim().split(/\s+/);return n+':'+l}).join(',');
+    const blob=new Blob([code.replace(/export\{[^}]+\}/,'')+'\nwindow.__trystero={'+assign+'};'],{type:'text/javascript'});
+    const burl=URL.createObjectURL(blob);
+    await new Promise((ok,fail)=>{const s=document.createElement('script');s.src=burl;s.onload=ok;s.onerror=fail;document.head.appendChild(s)});
+    URL.revokeObjectURL(burl);
+    const {joinRoom}=window.__trystero;
 
     status.textContent='Joining room, finding desktop...';
     room=joinRoom({appId:APP_ID},roomId);
