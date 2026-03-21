@@ -19,7 +19,7 @@
 
   function log(...a) { console.log('%c[Remote]', 'color:#6366f1;font-weight:bold', ...a); }
 
-  // Load trystero from our GitHub Pages (CORS-friendly, CSP-bypassed via loadScript)
+  // Load trystero the same way the controller does (proven to work)
   async function loadTrystero() {
     const base = CONTROLLER_URL.replace(/\/[^/]*$/, '');
     const res = await fetch(base + '/trystero-mqtt.min.js');
@@ -31,11 +31,8 @@
       const [local,, name] = s.trim().split(/\s+/);
       return `${name}:${local}`;
     }).join(',');
-    const wrapped = code.replace(/export\{[^}]+\}/, '') + `\nwindow.__trystero={${assign}};`;
-    const blob = new Blob([wrapped], { type: 'text/javascript' });
-    const url = URL.createObjectURL(blob);
-    await loadScript(url);
-    URL.revokeObjectURL(url);
+    new Function(code.replace(/export\{[^}]+\}/, '') + '\nwindow.__trystero={' + assign + '};')();
+    if (!window.__trystero?.joinRoom) throw new Error('Trystero failed to initialize');
   }
 
   // ========== INIT ==========
