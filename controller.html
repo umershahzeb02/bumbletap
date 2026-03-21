@@ -181,7 +181,7 @@ async function connect(){
   try {
     status.textContent='Loading trystero...';
     // Load bundled trystero from same origin
-    const res=await fetch('./trystero-torrent.min.js');
+    const res=await fetch('./trystero-nostr.min.js');
     const code=await res.text();
     const exp=code.match(/export\{([^}]+)\}/);
     const assign=exp[1].split(',').map(s=>{const[l,,n]=s.trim().split(/\s+/);return n+':'+l}).join(',');
