@@ -9,100 +9,82 @@
 (() => {
   // ========== CONFIGURATION ==========
   const CONTROLLER_URL = 'https://umershahzeb02.github.io/remote-tab-control/controller.html';
+  const ROOM_ID = 'rc-' + Math.random().toString(36).substring(2, 10);
+  const APP_ID = 'umershahzeb02-remote-tab-ctrl';
 
-  const PEER_ID = 'rc-' + Math.random().toString(36).substring(2, 10);
-  const ICE_SERVERS = [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-  ];
-
-  // ========== FIX: Disable trickle ICE ==========
-  // PeerJS cloud drops individual ICE candidates. This patch embeds all
-  // candidates directly into the SDP offer/answer so they travel in one
-  // reliable message instead of many unreliable ones.
-  function patchWebRTC() {
-    const Native = window.RTCPeerConnection;
-    if (!Native || Native.__patched) return;
-
-    function waitGathering(pc) {
-      if (pc.iceGatheringState === 'complete') return Promise.resolve();
-      return new Promise(r => {
-        const t = setTimeout(() => { log('ICE gathering timeout, proceeding'); r(); }, 5000);
-        pc.addEventListener('icegatheringstatechange', function f() {
-          if (pc.iceGatheringState === 'complete') { clearTimeout(t); pc.removeEventListener('icegatheringstatechange', f); r(); }
-        });
-      });
-    }
-
-    window.RTCPeerConnection = function(config, constraints) {
-      const pc = new Native(config, constraints);
-
-      const origCreateOffer = pc.createOffer.bind(pc);
-      const origCreateAnswer = pc.createAnswer.bind(pc);
-      const origSetLD = pc.setLocalDescription.bind(pc);
-
-      let ldSet = false;
-
-      pc.createOffer = async function(opts) {
-        const offer = await origCreateOffer(opts);
-        await origSetLD(offer);
-        ldSet = true;
-        await waitGathering(pc);
-        return pc.localDescription;
-      };
-
-      pc.createAnswer = async function(opts) {
-        const answer = await origCreateAnswer(opts);
-        await origSetLD(answer);
-        ldSet = true;
-        await waitGathering(pc);
-        return pc.localDescription;
-      };
-
-      pc.setLocalDescription = async function(desc) {
-        if (ldSet) { ldSet = false; return; }
-        return origSetLD(desc);
-      };
-
-      // Suppress trickle ICE — candidates are in the SDP now
-      Object.defineProperty(pc, 'onicecandidate', { set() {}, get() { return null; } });
-
-      return pc;
-    };
-
-    window.RTCPeerConnection.prototype = Native.prototype;
-    Object.assign(window.RTCPeerConnection, Native);
-    window.RTCPeerConnection.__patched = true;
-  }
-
-  patchWebRTC();
-
-  let peer = null, conn = null, connected = false;
+  let room = null, sendCmd = null, sendState = null;
+  let connected = false;
   let phoneCursor = null, highlightEl = null;
   let scrollAccX = 0, scrollAccY = 0, scrollRaf = null;
 
   function log(...a) { console.log('%c[Remote]', 'color:#6366f1;font-weight:bold', ...a); }
 
-  // function loadScript(url) {
-  //   return new Promise((res, rej) => {
-  //     if (document.querySelector(`script[src="${url}"]`)) return res();
-  //     const s = document.createElement('script');
-  //     s.src = url; s.onload = res; s.onerror = rej;
-  //     document.head.appendChild(s);
-  //   });
-  // }
-
   // ========== INIT ==========
   async function init() {
     try {
-      await loadScript('https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js');
       await loadScript('https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js');
       log('Scripts loaded');
     } catch (e) { log('Load failed:', e); return; }
     injectStyles();
     createUI();
     createCursor();
-    startPeer();
+    startConnection();
+  }
+
+  // ========== TRYSTERO CONNECTION ==========
+  async function startConnection() {
+    try {
+      const { joinRoom } = await import('https://esm.run/trystero/torrent');
+      log('Trystero loaded, joining room:', ROOM_ID);
+
+      room = joinRoom({ appId: APP_ID }, ROOM_ID);
+
+      const [_sendCmd, onCmd] = room.makeAction('cmd');
+      const [_sendState, onState] = room.makeAction('state');
+      sendCmd = _sendCmd;
+      sendState = _sendState;
+
+      // Listen for commands from phone
+      onCmd((data) => handleCommand(data));
+
+      room.onPeerJoin((peerId) => {
+        connected = true;
+        log('Phone connected!', peerId);
+        document.getElementById('__rc-dot').classList.add('on');
+        document.getElementById('__rc-stxt').textContent = 'Connected';
+        document.getElementById('__rc-overlay').style.display = 'none';
+        sendPageInfo();
+      });
+
+      room.onPeerLeave((peerId) => {
+        connected = false;
+        document.getElementById('__rc-dot').classList.remove('on');
+        document.getElementById('__rc-stxt').textContent = 'Disconnected';
+        phoneCursor.classList.remove('v'); highlightEl.classList.remove('v');
+        log('Phone disconnected', peerId);
+      });
+
+      log('Waiting for phone...');
+    } catch (e) {
+      log('Connection setup failed:', e);
+      document.getElementById('__rc-stxt').textContent = 'Error';
+    }
+  }
+
+  // ========== SAFE SEND ==========
+  function send(d) {
+    try { if (connected && sendCmd) sendCmd(d); } catch (e) { log('Send err:', e.message); }
+  }
+
+  function sendPageInfo() {
+    const info = {
+      type: 'page-info', title: document.title, url: location.href,
+      scrollY: window.scrollY,
+      scrollHeight: document.documentElement.scrollHeight,
+      viewportHeight: window.innerHeight,
+      viewportWidth: window.innerWidth,
+    };
+    try { if (connected && sendState) sendState(info); } catch (e) { log('Send err:', e.message); }
   }
 
   // ========== STYLES ==========
@@ -134,7 +116,7 @@
 
   // ========== UI ==========
   function createUI() {
-    const connectUrl = CONTROLLER_URL + '#' + PEER_ID;
+    const connectUrl = CONTROLLER_URL + '#' + ROOM_ID;
 
     const overlay = document.createElement('div');
     overlay.className = '__rc-overlay';
@@ -163,12 +145,12 @@
     const code = document.createElement('div');
     code.className = '__rc-code';
     code.id = '__rc-code';
-    code.textContent = PEER_ID;
+    code.textContent = ROOM_ID;
     code.title = 'Click to copy';
     code.addEventListener('click', () => {
-      navigator.clipboard.writeText(PEER_ID);
+      navigator.clipboard.writeText(ROOM_ID);
       code.textContent = 'Copied!';
-      setTimeout(() => code.textContent = PEER_ID, 1200);
+      setTimeout(() => code.textContent = ROOM_ID, 1200);
     });
 
     const br = document.createElement('br');
@@ -181,7 +163,6 @@
     overlay.appendChild(card);
     document.body.appendChild(overlay);
 
-    // Generate QR — pointing to the controller URL with peer ID as hash
     setTimeout(() => {
       new QRCode(qrBox, {
         text: connectUrl,
@@ -189,12 +170,10 @@
         colorDark: '#111', colorLight: '#fff',
         correctLevel: QRCode.CorrectLevel.M
       });
-      // Kill duplicate img that QRCode.js creates
       const kill = () => qrBox.querySelectorAll('img').forEach(i => i.remove());
       kill(); setTimeout(kill, 50); setTimeout(kill, 200); setTimeout(kill, 500); setTimeout(kill, 1000);
     }, 100);
 
-    // Status badge
     const status = document.createElement('div');
     status.className = '__rc-status';
     status.id = '__rc-status';
@@ -226,70 +205,6 @@
     highlightEl = document.createElement('div');
     highlightEl.className = '__rc-hl';
     document.body.appendChild(highlightEl);
-  }
-
-  // ========== SAFE SEND ==========
-  function send(d) { try { if (conn && conn.open) conn.send(d); } catch (e) { log('Send err:', e.message); } }
-
-  function sendPageInfo() {
-    send({
-      type: 'page-info', title: document.title, url: location.href,
-      scrollY: window.scrollY,
-      scrollHeight: document.documentElement.scrollHeight,
-      viewportHeight: window.innerHeight,
-      viewportWidth: window.innerWidth,
-    });
-  }
-
-  // ========== PEERJS ==========
-  function startPeer() {
-    peer = new Peer(PEER_ID, { debug: 0, config: { iceServers: ICE_SERVERS } });
-
-    peer.on('open', id => log('Peer ready:', id));
-
-    peer.on('connection', c => {
-      log('Incoming connection');
-      conn = c;
-
-      const onReady = () => {
-        if (connected) return;
-        connected = true;
-        log('Phone connected!');
-        document.getElementById('__rc-dot').classList.add('on');
-        document.getElementById('__rc-stxt').textContent = 'Connected';
-        document.getElementById('__rc-overlay').style.display = 'none';
-        sendPageInfo();
-      };
-
-      c.on('open', onReady);
-
-      // Fallback poll
-      let polls = 0;
-      const pt = setInterval(() => {
-        polls++;
-        if (c.open && !connected) { clearInterval(pt); onReady(); }
-        if (polls > 60 || connected) clearInterval(pt);
-      }, 200);
-
-      c.on('data', handleCommand);
-
-      c.on('close', () => {
-        connected = false; conn = null;
-        document.getElementById('__rc-dot').classList.remove('on');
-        document.getElementById('__rc-stxt').textContent = 'Disconnected';
-        phoneCursor.classList.remove('v'); highlightEl.classList.remove('v');
-        log('Phone disconnected');
-      });
-
-      c.on('error', e => log('Conn error:', e));
-    });
-
-    peer.on('error', e => {
-      log('Peer error:', e);
-      document.getElementById('__rc-stxt').textContent = 'Error';
-    });
-
-    peer.on('disconnected', () => { log('Reconnecting...'); peer.reconnect(); });
   }
 
   // ========== COMMAND HANDLER ==========
@@ -381,13 +296,13 @@
 
       case 'ping': send({ type: 'pong', t: Date.now() }); break;
       case 'get-info': sendPageInfo(); break;
-      case 'disconnect': if (conn) conn.close(); break;
+      case 'disconnect': if (room) room.leave(); break;
     }
   }
 
   // ========== KEEPALIVE ==========
   setInterval(() => { if (connected) send({ type: 'heartbeat' }); }, 5000);
-  window.addEventListener('beforeunload', () => { send({ type: 'tab-closing' }); if (conn) conn.close(); if (peer) peer.destroy(); });
+  window.addEventListener('beforeunload', () => { send({ type: 'tab-closing' }); if (room) room.leave(); });
 
   init();
 })();
