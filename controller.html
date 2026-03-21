@@ -185,7 +185,8 @@ async function connect(){
     const code=await res.text();
     const exp=code.match(/export\{([^}]+)\}/);
     const assign=exp[1].split(',').map(s=>{const[l,,n]=s.trim().split(/\s+/);return n+':'+l}).join(',');
-    (0,eval)(code.replace(/export\{[^}]+\}/,'')+'\nwindow.__trystero={'+assign+'};');
+    new Function(code.replace(/export\{[^}]+\}/,'')+'\nwindow.__trystero={'+assign+'};')();
+    if(!window.__trystero?.joinRoom) throw new Error('Trystero failed to initialize');
     const {joinRoom}=window.__trystero;
 
     status.textContent='Joining room, finding desktop...';
