@@ -5,91 +5,264 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#0a0a0f">
+<meta name="theme-color" content="#0a0a12">
 <title>Remote Control</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-:root{--bg:#0a0a0f;--s:#111118;--s2:#1a1a22;--b:#25252f;--t:#e4e4ec;--t2:#6b6b80;--a:#6366f1;--a2:#818cf8;--ok:#34d399;--err:#f87171}
+:root{
+  --bg:#0a0a12;--s:#12121e;--s2:#1a1a2a;--b:#1e1e2e;
+  --t:#e4e4ec;--t2:#6b6b80;--t3:#3a3a52;
+  --a:#6366f1;--a2:#818cf8;--a-glow:rgba(99,102,241,.25);
+  --teal:#2dd4bf;--teal-glow:rgba(45,212,191,.2);
+  --ok:#34d399;--err:#f87171;
+  --glass:rgba(18,18,30,.7);--glass-border:rgba(99,102,241,.12);
+}
 html,body{height:100%;overflow:hidden}
-body{font-family:-apple-system,system-ui,'Segoe UI',sans-serif;background:var(--bg);color:var(--t);display:flex;flex-direction:column;touch-action:none;user-select:none}
+body{font-family:'Outfit',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--t);display:flex;flex-direction:column;touch-action:none;user-select:none}
 
-/* Connect */
-.conn{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px}
+/* ========== SVG icon defaults ========== */
+.icon{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.icon-sm{width:18px;height:18px}
+.icon-lg{width:32px;height:32px}
+.icon-xl{width:44px;height:44px}
+
+/* ========== Connect Screen ========== */
+.conn{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px;position:relative;overflow:hidden}
 .conn.hide{display:none}
-.conn-icon{font-size:44px;margin-bottom:14px}
-.conn-title{font-size:20px;font-weight:700;margin-bottom:4px}
-.conn-sub{font-size:12px;color:var(--t2);margin-bottom:28px;text-align:center;line-height:1.5}
-.conn-input{width:100%;max-width:300px;background:var(--s);border:1px solid var(--b);border-radius:12px;padding:14px 18px;font-size:16px;font-weight:600;color:var(--t);font-family:'Courier New',monospace;text-align:center;outline:none}
-.conn-input:focus{border-color:var(--a)}
-.conn-input::placeholder{color:#33334a;font-weight:400}
-.conn-btn{width:100%;max-width:300px;padding:14px;background:var(--a);color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:700;font-family:inherit;cursor:pointer;margin-top:12px}
-.conn-btn:active{transform:scale(.97);background:#5558e8}
-.conn-btn:disabled{opacity:.4}
-.conn-err{color:var(--err);font-size:12px;margin-top:10px;text-align:center}
-.conn-status{font-size:11px;color:var(--t2);margin-top:16px;text-align:center;line-height:1.5}
-.conn-auto{font-size:11px;color:var(--t2);margin-top:16px;text-align:center;line-height:1.5}
 
-/* Controller */
+/* Animated gradient orbs background */
+.conn::before,.conn::after{content:'';position:absolute;border-radius:50%;filter:blur(80px);opacity:.35;animation:orbFloat 12s ease-in-out infinite;pointer-events:none}
+.conn::before{width:280px;height:280px;background:radial-gradient(circle,var(--a),transparent 70%);top:-60px;left:-80px;animation-delay:0s}
+.conn::after{width:240px;height:240px;background:radial-gradient(circle,var(--teal),transparent 70%);bottom:-40px;right:-60px;animation-delay:-6s;animation-duration:14s}
+@keyframes orbFloat{
+  0%,100%{transform:translate(0,0) scale(1)}
+  25%{transform:translate(30px,40px) scale(1.1)}
+  50%{transform:translate(-20px,20px) scale(.95)}
+  75%{transform:translate(10px,-30px) scale(1.05)}
+}
+
+.conn-icon{margin-bottom:18px;color:var(--a);position:relative;z-index:1}
+.conn-title{font-size:22px;font-weight:700;margin-bottom:4px;position:relative;z-index:1;letter-spacing:-.02em}
+.conn-sub{font-size:12px;color:var(--t2);margin-bottom:28px;text-align:center;line-height:1.6;position:relative;z-index:1}
+
+.conn-input{
+  width:100%;max-width:300px;
+  background:var(--glass);
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  border:1px solid var(--glass-border);border-radius:14px;
+  padding:15px 18px;font-size:17px;font-weight:500;color:var(--t);
+  font-family:'DM Mono',monospace;text-align:center;outline:none;
+  position:relative;z-index:1;
+  transition:border-color .25s,box-shadow .25s;
+}
+.conn-input:focus{border-color:var(--a);box-shadow:0 0 0 3px var(--a-glow),inset 0 0 0 1px var(--a)}
+.conn-input::placeholder{color:var(--t3);font-weight:400}
+
+.conn-btn{
+  width:100%;max-width:300px;padding:15px;
+  background:linear-gradient(135deg,var(--a) 0%,#7c3aed 100%);
+  background-size:200% 200%;
+  color:#fff;border:none;border-radius:14px;
+  font-size:15px;font-weight:700;font-family:'Outfit',sans-serif;
+  cursor:pointer;margin-top:12px;position:relative;z-index:1;
+  transition:transform .15s cubic-bezier(.34,1.56,.64,1),box-shadow .25s;
+  box-shadow:0 4px 24px rgba(99,102,241,.25);
+  display:flex;align-items:center;justify-content:center;gap:8px;
+}
+.conn-btn:hover{animation:gradientShift 3s ease infinite;box-shadow:0 6px 32px rgba(99,102,241,.4)}
+.conn-btn:active{transform:scale(.96)}
+.conn-btn:disabled{opacity:.4;box-shadow:none}
+@keyframes gradientShift{
+  0%,100%{background-position:0% 50%}
+  50%{background-position:100% 50%}
+}
+
+.conn-err{color:var(--err);font-size:12px;margin-top:10px;text-align:center;position:relative;z-index:1}
+.conn-status{font-size:11px;color:var(--t2);margin-top:16px;text-align:center;line-height:1.5;position:relative;z-index:1}
+.conn-auto{font-size:11px;color:var(--teal);margin-top:16px;text-align:center;line-height:1.5;position:relative;z-index:1}
+
+/* ========== Controller ========== */
 .ctrl{flex:1;display:none;flex-direction:column}
 .ctrl.on{display:flex}
 
-.topbar{padding:10px 14px;background:var(--s);border-bottom:1px solid var(--b);display:flex;align-items:center;gap:8px;flex-shrink:0}
-.dot{width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 6px var(--ok);flex-shrink:0}
-.ptitle{flex:1;font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dc{background:none;border:1px solid rgba(248,113,113,.2);color:var(--err);padding:5px 12px;border-radius:7px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer}
+/* Top bar */
+.topbar{
+  padding:10px 14px;
+  background:var(--s);
+  border-bottom:1px solid var(--b);
+  display:flex;align-items:center;gap:8px;flex-shrink:0;
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ok);flex-shrink:0;animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{0%,100%{box-shadow:0 0 4px var(--ok)}50%{box-shadow:0 0 12px var(--ok),0 0 4px var(--ok)}}
+.ptitle{flex:1;font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:-.01em}
+.dc{
+  background:none;border:1px solid rgba(248,113,113,.15);
+  color:var(--err);padding:5px 12px;border-radius:8px;
+  font-size:11px;font-weight:600;font-family:'Outfit',sans-serif;cursor:pointer;
+  transition:background .2s,border-color .2s;
+}
+.dc:active{background:rgba(248,113,113,.1);border-color:rgba(248,113,113,.3)}
 
-.modes{display:flex;background:var(--s);border-bottom:1px solid var(--b);padding:5px 10px;gap:3px;flex-shrink:0}
-.mode{flex:1;padding:9px 6px;text-align:center;background:none;border:none;color:var(--t2);font-size:11px;font-weight:600;border-radius:8px;font-family:inherit;cursor:pointer}
-.mode:active{background:var(--s2)}
-.mode.on{background:var(--a);color:#fff}
+/* Mode tabs with sliding indicator */
+.modes{
+  display:flex;background:var(--s);
+  border-bottom:1px solid var(--b);
+  padding:6px 10px;gap:4px;flex-shrink:0;
+  position:relative;
+}
+.mode{
+  flex:1;padding:9px 6px;text-align:center;
+  background:none;border:none;color:var(--t2);
+  font-size:11px;font-weight:600;border-radius:10px;
+  font-family:'Outfit',sans-serif;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;gap:5px;
+  position:relative;z-index:2;
+  transition:color .25s;
+}
+.mode .icon{width:16px;height:16px;transition:stroke .25s,color .25s}
+.mode.on{color:#fff}
+.mode.on .icon{stroke:#fff}
+.mode-indicator{
+  position:absolute;
+  height:calc(100% - 12px);top:6px;
+  background:var(--a);border-radius:10px;
+  transition:left .3s cubic-bezier(.34,1.56,.64,1),width .3s cubic-bezier(.34,1.56,.64,1);
+  z-index:1;
+  box-shadow:0 2px 12px var(--a-glow);
+}
 
-.pad{flex:1;position:relative;overflow:hidden;background:radial-gradient(circle at 50% 50%,#14141c 0%,var(--bg) 100%);display:flex;align-items:center;justify-content:center}
-.pad-hint{font-size:12px;color:#2a2a38;text-align:center;line-height:1.9;pointer-events:none}
-.pad-hint b{color:#3a3a4a}
+/* Trackpad */
+.pad{
+  flex:1;position:relative;overflow:hidden;
+  background:radial-gradient(ellipse at 50% 40%,#14142a 0%,var(--bg) 70%);
+  display:flex;align-items:center;justify-content:center;
+}
+.pad-hint{font-size:12px;color:#2a2a3e;text-align:center;line-height:2;pointer-events:none;letter-spacing:.01em}
+.pad-hint b{color:#3e3e56;font-weight:600}
 
-.tdot{position:absolute;width:56px;height:56px;border-radius:50%;background:rgba(99,102,241,.12);border:2px solid rgba(99,102,241,.25);pointer-events:none;transform:translate(-50%,-50%) scale(0);transition:transform .12s}
+.tdot{
+  position:absolute;width:60px;height:60px;border-radius:50%;
+  background:radial-gradient(circle,rgba(99,102,241,.18),rgba(99,102,241,.06));
+  border:2px solid rgba(99,102,241,.3);
+  pointer-events:none;transform:translate(-50%,-50%) scale(0);
+  transition:transform .15s cubic-bezier(.34,1.56,.64,1);
+  box-shadow:0 0 20px rgba(99,102,241,.15);
+}
 .tdot.on{transform:translate(-50%,-50%) scale(1)}
 
-.strack{position:absolute;top:0;right:0;width:44px;height:100%;background:rgba(255,255,255,.02);border-left:1px solid var(--b)}
-.sthumb{position:absolute;left:6px;right:6px;min-height:24px;background:rgba(99,102,241,.3);border-radius:3px}
+/* Scroll track */
+.strack{position:absolute;top:12px;right:8px;bottom:12px;width:40px;background:rgba(255,255,255,.02);border:1px solid var(--b);border-radius:20px}
+.sthumb{position:absolute;left:4px;right:4px;min-height:28px;background:linear-gradient(180deg,var(--a),#7c3aed);border-radius:14px;box-shadow:0 2px 8px var(--a-glow)}
 
+/* D-Pad */
 .dpad{flex:1;display:flex;align-items:center;justify-content:center;background:var(--bg)}
-.dpad-c{width:220px;height:220px;position:relative}
-.dpad-b{position:absolute;width:66px;height:66px;background:var(--s2);border:1px solid var(--b);border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:24px;cursor:pointer}
-.dpad-b:active{background:var(--a);transform:scale(.92)}
+.dpad-c{width:230px;height:230px;position:relative}
+.dpad-b{
+  position:absolute;width:68px;height:68px;
+  background:var(--glass);
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  border:1px solid var(--b);border-radius:16px;
+  display:flex;align-items:center;justify-content:center;
+  cursor:pointer;color:var(--t);
+  transition:transform .15s cubic-bezier(.34,1.56,.64,1),background .15s,border-color .15s,box-shadow .15s;
+}
+.dpad-b:active{background:var(--a);border-color:var(--a2);transform:scale(.88);box-shadow:0 0 20px var(--a-glow)}
 .du{top:0;left:50%;transform:translateX(-50%)}
+.du:active{transform:translateX(-50%) scale(.88)}
 .dd{bottom:0;left:50%;transform:translateX(-50%)}
+.dd:active{transform:translateX(-50%) scale(.88)}
 .dl{left:0;top:50%;transform:translateY(-50%)}
+.dl:active{transform:translateY(-50%) scale(.88)}
 .dr{right:0;top:50%;transform:translateY(-50%)}
-.dc2{top:50%;left:50%;transform:translate(-50%,-50%);width:58px;height:58px;border-radius:50%;background:var(--a);border-color:var(--a2);font-size:11px;color:#fff;font-weight:700}
+.dr:active{transform:translateY(-50%) scale(.88)}
+.dc2{
+  top:50%;left:50%;transform:translate(-50%,-50%);
+  width:60px;height:60px;border-radius:50%;
+  background:linear-gradient(135deg,var(--a),#7c3aed);
+  border-color:var(--a2);
+  font-size:11px;color:#fff;font-weight:700;
+  font-family:'Outfit',sans-serif;
+  box-shadow:0 4px 20px var(--a-glow);
+}
+.dc2:active{transform:translate(-50%,-50%) scale(.88)}
 
+/* Keyboard section */
 .kbsec{padding:10px;background:var(--s);border-top:1px solid var(--b);flex-shrink:0}
 .kbrow{display:flex;gap:6px}
-.kbin{flex:1;background:var(--bg);border:1px solid var(--b);border-radius:10px;padding:12px 14px;font-size:14px;color:var(--t);font-family:inherit;outline:none}
-.kbin:focus{border-color:var(--a)}
-.kbsend{padding:12px 18px;background:var(--a);color:#fff;border:none;border-radius:10px;font-size:13px;font-weight:700;font-family:inherit}
+.kbin{
+  flex:1;background:var(--bg);border:1px solid var(--b);
+  border-radius:12px;padding:12px 14px;
+  font-size:14px;color:var(--t);font-family:'DM Mono',monospace;
+  outline:none;transition:border-color .2s,box-shadow .2s;
+}
+.kbin:focus{border-color:var(--a);box-shadow:0 0 0 3px var(--a-glow)}
+.kbsend{
+  padding:12px 18px;
+  background:linear-gradient(135deg,var(--a),#7c3aed);
+  color:#fff;border:none;border-radius:12px;
+  font-size:13px;font-weight:700;font-family:'Outfit',sans-serif;
+  transition:transform .15s cubic-bezier(.34,1.56,.64,1);
+}
+.kbsend:active{transform:scale(.93)}
 
-.kgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-top:8px}
-.kb{padding:12px 6px;background:var(--s2);border:1px solid var(--b);border-radius:10px;color:var(--t);text-align:center;cursor:pointer;font-size:18px;display:flex;flex-direction:column;align-items:center;gap:3px}
-.kb:active{background:var(--a);border-color:var(--a)}
-.kb .kl{font-size:8px;color:var(--t2);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.kgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px}
+.kb{
+  padding:12px 6px;
+  background:var(--glass);
+  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+  border:1px solid var(--b);border-radius:12px;
+  color:var(--t);text-align:center;cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;gap:4px;
+  transition:transform .15s cubic-bezier(.34,1.56,.64,1),background .12s,border-color .12s,box-shadow .12s;
+}
+.kb:active{background:var(--a);border-color:var(--a2);transform:scale(.9);box-shadow:0 0 16px var(--a-glow)}
+.kb .icon{width:22px;height:22px}
+.kb .kl{font-size:8px;color:var(--t2);font-weight:600;text-transform:uppercase;letter-spacing:.05em;font-family:'Outfit',sans-serif}
 .kb:active .kl{color:rgba(255,255,255,.7)}
 
-.nav{display:grid;grid-template-columns:repeat(5,1fr);gap:5px;padding:10px;background:var(--s);border-top:1px solid var(--b);flex-shrink:0}
-.nb{padding:12px 6px;background:var(--s2);border:1px solid var(--b);border-radius:10px;color:var(--t);text-align:center;cursor:pointer;font-size:18px;display:flex;flex-direction:column;align-items:center;gap:3px}
-.nb:active{background:var(--a);border-color:var(--a);transform:scale(.95)}
-.nb .nl{font-size:8px;color:var(--t2);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+/* Navigation bar */
+.nav{
+  display:grid;grid-template-columns:repeat(5,1fr);gap:5px;
+  padding:10px;background:var(--s);border-top:1px solid var(--b);flex-shrink:0;
+}
+.nb{
+  padding:12px 6px;
+  background:var(--glass);
+  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+  border:1px solid var(--b);border-radius:12px;
+  color:var(--t);text-align:center;cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;gap:4px;
+  transition:transform .15s cubic-bezier(.34,1.56,.64,1),background .12s,border-color .12s,box-shadow .12s;
+}
+.nb:active{background:var(--a);border-color:var(--a2);transform:scale(.9);box-shadow:0 0 16px var(--a-glow)}
+.nb .icon{width:20px;height:20px}
+.nb .nl{font-size:8px;color:var(--t2);font-weight:600;text-transform:uppercase;letter-spacing:.05em;font-family:'Outfit',sans-serif}
 .nb:active .nl{color:rgba(255,255,255,.7)}
+
+/* ========== Utility ========== */
+@media(prefers-color-scheme:light){
+  :root{--bg:#0a0a12;--s:#12121e}
+}
 </style>
 </head>
 <body>
 
 <div class="conn" id="cs">
-  <div class="conn-icon">📱</div>
+  <div class="conn-icon">
+    <!-- Link / connection icon -->
+    <svg class="icon icon-xl" viewBox="0 0 24 24"><path d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m9.86-2.54a4.5 4.5 0 0 0-1.242-7.244l-4.5-4.5a4.5 4.5 0 0 0-6.364 6.364L4.343 8.28" transform="translate(0,2)"/><path d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 1 1-6.364-6.364l1.757-1.757m9.86-2.54a4.5 4.5 0 0 0-1.242-7.244l4.5-4.5a4.5 4.5 0 1 0 6.364 6.364l-1.757 1.757" style="display:none"/></svg>
+  </div>
   <div class="conn-title">Remote Control</div>
   <div class="conn-sub">Enter the code from your computer<br>or scan the QR code to auto-connect.</div>
   <input class="conn-input" id="codeIn" placeholder="Enter code..." autocomplete="off" autocorrect="off" spellcheck="false">
-  <button class="conn-btn" id="goBtn">Connect</button>
+  <button class="conn-btn" id="goBtn">
+    <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 1 1-6.364-6.364l1.757-1.757m9.86-2.54a4.5 4.5 0 0 0-1.242-7.244l4.5-4.5a4.5 4.5 0 1 0 6.364 6.364l-1.757 1.757"/></svg>
+    Connect
+  </button>
   <div class="conn-err" id="errMsg"></div>
   <div class="conn-status" id="statusMsg"></div>
   <div class="conn-auto" id="autoMsg"></div>
@@ -102,11 +275,28 @@ body{font-family:-apple-system,system-ui,'Segoe UI',sans-serif;background:var(--
     <button class="dc" id="dcBtn">Disconnect</button>
   </div>
 
-  <div class="modes">
-    <button class="mode on" data-m="pad">🖱 Pad</button>
-    <button class="mode" data-m="scroll">📜 Scroll</button>
-    <button class="mode" data-m="dpad">🎮 D-Pad</button>
-    <button class="mode" data-m="kb">⌨️ Keys</button>
+  <div class="modes" id="modesBar">
+    <div class="mode-indicator" id="modeSlider"></div>
+    <button class="mode on" data-m="pad">
+      <!-- Cursor arrow rays -->
+      <svg class="icon" viewBox="0 0 24 24"><path d="M15.042 21.672L13.684 16.6m0 0l-2.51 2.225.569-9.47 5.227 7.917-3.286-.672zM12 2.25V4.5m5.834.166l-1.591 1.591M20.25 10.5H18M7.757 14.743l-1.59 1.59M6 10.5H3.75m4.007-4.243l-1.59-1.59"/></svg>
+      Pad
+    </button>
+    <button class="mode" data-m="scroll">
+      <!-- Arrows up-down -->
+      <svg class="icon" viewBox="0 0 24 24"><path d="M3 7.5L7.5 3m0 0L12 7.5M7.5 3v13.5m13.5 0L16.5 21m0 0L12 16.5m4.5 4.5V7.5"/></svg>
+      Scroll
+    </button>
+    <button class="mode" data-m="dpad">
+      <!-- Squares 2x2 / grid -->
+      <svg class="icon" viewBox="0 0 24 24"><path d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6zm0 9.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25zM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6zm0 9.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25A2.25 2.25 0 0 1 13.5 18v-2.25z"/></svg>
+      D-Pad
+    </button>
+    <button class="mode" data-m="kb">
+      <!-- Command line -->
+      <svg class="icon" viewBox="0 0 24 24"><path d="m6.75 7.5 3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0 0 21 18V6a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 6v12a2.25 2.25 0 0 0 2.25 2.25z"/></svg>
+      Keys
+    </button>
   </div>
 
   <div class="pad" id="padArea" data-p="pad">
@@ -121,10 +311,22 @@ body{font-family:-apple-system,system-ui,'Segoe UI',sans-serif;background:var(--
 
   <div class="dpad" data-p="dpad" style="display:none">
     <div class="dpad-c">
-      <div class="dpad-b du" data-a="sup">⬆</div>
-      <div class="dpad-b dd" data-a="sdn">⬇</div>
-      <div class="dpad-b dl" data-a="back">◀</div>
-      <div class="dpad-b dr" data-a="fwd">▶</div>
+      <div class="dpad-b du" data-a="sup">
+        <!-- Chevron up -->
+        <svg class="icon" viewBox="0 0 24 24"><path d="m4.5 15.75 7.5-7.5 7.5 7.5"/></svg>
+      </div>
+      <div class="dpad-b dd" data-a="sdn">
+        <!-- Chevron down -->
+        <svg class="icon" viewBox="0 0 24 24"><path d="m19.5 8.25-7.5 7.5-7.5-7.5"/></svg>
+      </div>
+      <div class="dpad-b dl" data-a="back">
+        <!-- Chevron left -->
+        <svg class="icon" viewBox="0 0 24 24"><path d="M15.75 19.5 8.25 12l7.5-7.5"/></svg>
+      </div>
+      <div class="dpad-b dr" data-a="fwd">
+        <!-- Chevron right -->
+        <svg class="icon" viewBox="0 0 24 24"><path d="m8.25 4.5 7.5 7.5-7.5 7.5"/></svg>
+      </div>
       <div class="dpad-b dc2" data-a="tap">TAP</div>
     </div>
   </div>
@@ -135,21 +337,65 @@ body{font-family:-apple-system,system-ui,'Segoe UI',sans-serif;background:var(--
       <button class="kbsend" id="kbSend">Send</button>
     </div>
     <div class="kgrid">
-      <div class="kb" data-k="Enter">↵<span class="kl">Enter</span></div>
-      <div class="kb" data-k="Tab">⇥<span class="kl">Tab</span></div>
-      <div class="kb" data-k="Backspace">⌫<span class="kl">Delete</span></div>
-      <div class="kb" data-k="Escape">⎋<span class="kl">Esc</span></div>
-      <div class="kb" data-k=" ">␣<span class="kl">Space</span></div>
-      <div class="kb" data-k="F5">🔄<span class="kl">Refresh</span></div>
+      <div class="kb" data-k="Enter">
+        <!-- Arrow turn down left (enter) -->
+        <svg class="icon" viewBox="0 0 24 24"><path d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" transform="rotate(90 12 12)"/></svg>
+        <span class="kl">Enter</span>
+      </div>
+      <div class="kb" data-k="Tab">
+        <!-- Arrow right start on rectangle (tab) -->
+        <svg class="icon" viewBox="0 0 24 24"><path d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15m3 0 3-3m0 0-3-3m3 3H9"/></svg>
+        <span class="kl">Tab</span>
+      </div>
+      <div class="kb" data-k="Backspace">
+        <!-- Backspace -->
+        <svg class="icon" viewBox="0 0 24 24"><path d="M12 9.75 14.25 12m0 0 2.25 2.25M14.25 12l2.25-2.25M14.25 12 12 14.25m-2.58 4.92-6.374-6.375a1.125 1.125 0 0 1 0-1.59L9.42 4.83c.21-.211.497-.33.795-.33H19.5a2.25 2.25 0 0 1 2.25 2.25v10.5a2.25 2.25 0 0 1-2.25 2.25h-9.284c-.298 0-.585-.119-.795-.33z"/></svg>
+        <span class="kl">Delete</span>
+      </div>
+      <div class="kb" data-k="Escape">
+        <!-- X circle -->
+        <svg class="icon" viewBox="0 0 24 24"><path d="m9.75 9.75 4.5 4.5m0-4.5-4.5 4.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg>
+        <span class="kl">Esc</span>
+      </div>
+      <div class="kb" data-k=" ">
+        <!-- Minus / horizontal bar (space) -->
+        <svg class="icon" viewBox="0 0 24 24"><path d="M5 12h14"/></svg>
+        <span class="kl">Space</span>
+      </div>
+      <div class="kb" data-k="F5">
+        <!-- Arrow path (refresh) -->
+        <svg class="icon" viewBox="0 0 24 24"><path d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182M21.015 4.356v4.992"/></svg>
+        <span class="kl">Refresh</span>
+      </div>
     </div>
   </div>
 
   <div class="nav">
-    <div class="nb" data-n="back">◀<span class="nl">Back</span></div>
-    <div class="nb" data-n="top">⤒<span class="nl">Top</span></div>
-    <div class="nb" data-n="reload">↻<span class="nl">Reload</span></div>
-    <div class="nb" data-n="bottom">⤓<span class="nl">Bottom</span></div>
-    <div class="nb" data-n="forward">▶<span class="nl">Fwd</span></div>
+    <div class="nb" data-n="back">
+      <!-- Chevron left -->
+      <svg class="icon" viewBox="0 0 24 24"><path d="M15.75 19.5 8.25 12l7.5-7.5"/></svg>
+      <span class="nl">Back</span>
+    </div>
+    <div class="nb" data-n="top">
+      <!-- Chevron double up -->
+      <svg class="icon" viewBox="0 0 24 24"><path d="m4.5 18.75 7.5-7.5 7.5 7.5"/><path d="m4.5 12.75 7.5-7.5 7.5 7.5"/></svg>
+      <span class="nl">Top</span>
+    </div>
+    <div class="nb" data-n="reload">
+      <!-- Arrow path (reload) -->
+      <svg class="icon" viewBox="0 0 24 24"><path d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182M21.015 4.356v4.992"/></svg>
+      <span class="nl">Reload</span>
+    </div>
+    <div class="nb" data-n="bottom">
+      <!-- Chevron double down -->
+      <svg class="icon" viewBox="0 0 24 24"><path d="m4.5 5.25 7.5 7.5 7.5-7.5"/><path d="m4.5 11.25 7.5 7.5 7.5-7.5"/></svg>
+      <span class="nl">Bottom</span>
+    </div>
+    <div class="nb" data-n="forward">
+      <!-- Chevron right -->
+      <svg class="icon" viewBox="0 0 24 24"><path d="m8.25 4.5 7.5 7.5-7.5 7.5"/></svg>
+      <span class="nl">Fwd</span>
+    </div>
   </div>
 </div>
 
@@ -159,11 +405,23 @@ const APP_ID = 'umershahzeb02-remote-tab-ctrl';
 let room=null,sendCmd=null,sendState=null;
 let pi={scrollY:0,scrollHeight:1,viewportHeight:1,viewportWidth:1,title:''};
 
+// ===== Sliding mode indicator =====
+function updateSlider(){
+  const bar=document.getElementById('modesBar');
+  const active=bar.querySelector('.mode.on');
+  const slider=document.getElementById('modeSlider');
+  if(!active||!slider||!bar)return;
+  const barRect=bar.getBoundingClientRect();
+  const btnRect=active.getBoundingClientRect();
+  slider.style.left=(btnRect.left-barRect.left)+'px';
+  slider.style.width=btnRect.width+'px';
+}
+
 // Auto-fill from URL hash (QR code scanned)
 const hash=location.hash.slice(1);
 if(hash){
   document.getElementById('codeIn').value=hash;
-  document.getElementById('autoMsg').textContent='Code detected from QR — auto-connecting...';
+  document.getElementById('autoMsg').textContent='Code detected from QR \u2014 auto-connecting...';
   setTimeout(connect,600);
 }
 
@@ -208,6 +466,8 @@ async function connect(){
       document.getElementById('cs').classList.add('hide');
       document.getElementById('ctrl').classList.add('on');
       initCtrl();
+      // Initialize the slider after DOM is visible
+      requestAnimationFrame(()=>{requestAnimationFrame(updateSlider)});
       // Request page info
       sendCmd({type:'get-info'});
     });
@@ -245,6 +505,7 @@ document.querySelectorAll('.mode').forEach(m=>{m.addEventListener('click',()=>{
   document.querySelectorAll('.mode').forEach(x=>x.classList.remove('on'));m.classList.add('on');
   document.querySelectorAll('[data-p]').forEach(p=>p.style.display='none');
   document.querySelector(`[data-p="${m.dataset.m}"]`).style.display='flex';
+  updateSlider();
 })});
 
 function initCtrl(){initPad();initScroll();initDpad();initKb();initNav()}
@@ -337,6 +598,9 @@ function initNav(){document.querySelectorAll('[data-n]').forEach(b=>{b.addEventL
 
 // ===== KEEPALIVE =====
 setInterval(()=>{if(sendCmd)send({type:'ping'})},8000);
+
+// ===== Resize handler for slider =====
+window.addEventListener('resize',updateSlider);
 </script>
 </body>
 </html>

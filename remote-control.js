@@ -9,7 +9,10 @@
 (() => {
   // ========== CONFIGURATION ==========
   const CONTROLLER_URL = 'https://umershahzeb02.github.io/remote-tab-control/controller.html';
-  const ROOM_ID = 'rc-' + Math.random().toString(36).substring(2, 10);
+  // Persist room ID across page navigations so bridge popup stays connected
+  const STORED_ROOM = sessionStorage.getItem('__rc_room');
+  const ROOM_ID = STORED_ROOM || 'rc-' + Math.random().toString(36).substring(2, 10);
+  if (!STORED_ROOM) sessionStorage.setItem('__rc_room', ROOM_ID);
 
   let room = null;
   let connected = false;
@@ -24,28 +27,60 @@
   function createBridge() {
     return new Promise((resolve, reject) => {
       const base = CONTROLLER_URL.replace(/\/[^/]*$/, '');
-      bridgeWin = window.open(base + '/bridge.html#' + ROOM_ID, '_rc_bridge', 'width=1,height=1,left=-100,top=-100');
+      const bridgeUrl = base + '/bridge.html#' + ROOM_ID;
 
-      if (!bridgeWin) {
-        reject(new Error('Popup blocked — allow popups for this site'));
+      // Try to reuse existing bridge popup (persists across navigations)
+      bridgeWin = window.open('', '_rc_bridge');
+
+      if (bridgeWin && bridgeWin.location.href !== 'about:blank' && !bridgeWin.closed) {
+        // Existing bridge found — just re-attach
+        log('Reattaching to existing bridge');
+        bridgeWin.focus();
+        // Give it a moment then check if it responds
+        const ping = () => bridgeWin.postMessage({ rc: 'ping' }, '*');
+        let pingCount = 0;
+        const pingInterval = setInterval(() => {
+          ping();
+          if (++pingCount > 10) { clearInterval(pingInterval); openNew(); }
+        }, 300);
+
+        window.addEventListener('message', function onMsg(e) {
+          if (e.data?.rc === 'pong' || e.data?.rc === 'ready') {
+            clearInterval(pingInterval);
+            window.removeEventListener('message', onMsg);
+            log('Bridge reattached');
+            resolve();
+          }
+        });
         return;
       }
 
-      const timeout = setTimeout(() => reject(new Error('Bridge timeout')), 15000);
+      openNew();
 
-      window.addEventListener('message', function onMsg(e) {
-        if (e.data?.rc === 'ready') {
-          clearTimeout(timeout);
-          window.removeEventListener('message', onMsg);
-          log('Bridge ready');
-          resolve();
+      function openNew() {
+        bridgeWin = window.open(bridgeUrl, '_rc_bridge', 'width=320,height=220,left=50,top=50');
+
+        if (!bridgeWin) {
+          reject(new Error('Popup blocked — allow popups for this site'));
+          return;
         }
-        if (e.data?.rc === 'error') {
-          clearTimeout(timeout);
-          window.removeEventListener('message', onMsg);
-          reject(new Error('Bridge error: ' + e.data.msg));
-        }
-      });
+
+        const timeout = setTimeout(() => reject(new Error('Bridge timeout')), 15000);
+
+        window.addEventListener('message', function onMsg(e) {
+          if (e.data?.rc === 'ready') {
+            clearTimeout(timeout);
+            window.removeEventListener('message', onMsg);
+            log('Bridge ready');
+            resolve();
+          }
+          if (e.data?.rc === 'error') {
+            clearTimeout(timeout);
+            window.removeEventListener('message', onMsg);
+            reject(new Error('Bridge error: ' + e.data.msg));
+          }
+        });
+      }
     });
   }
 
@@ -155,7 +190,7 @@
 
     const title = document.createElement('div');
     title.className = '__rc-title';
-    title.textContent = '📱 Remote Control';
+    title.innerHTML = '<svg style="width:18px;height:18px;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>Remote Control';
 
     const sub = document.createElement('div');
     sub.className = '__rc-sub';
@@ -329,7 +364,8 @@
 
   // ========== KEEPALIVE ==========
   setInterval(() => { if (connected) send({ type: 'heartbeat' }); }, 5000);
-  window.addEventListener('beforeunload', () => { send({ type: 'tab-closing' }); if (bridgeWin) bridgeWin.close(); });
+  // Don't close bridge on navigation — it persists across page loads
+  window.addEventListener('beforeunload', () => { send({ type: 'tab-closing' }); });
 
   init();
 })();

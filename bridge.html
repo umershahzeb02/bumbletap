@@ -1,11 +1,396 @@
 <!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>RC Bridge</title></head>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RC Bridge — Mission Control</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Outfit:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Outfit', sans-serif;
+    background: #0c1222;
+    color: #c8d6e5;
+    width: 320px;
+    height: 200px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    user-select: none;
+  }
+
+  /* subtle grid background */
+  body::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(34,211,238,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(34,211,238,0.03) 1px, transparent 1px);
+    background-size: 20px 20px;
+    pointer-events: none;
+  }
+
+  /* faint radial glow behind card */
+  body::after {
+    content: '';
+    position: absolute;
+    width: 260px;
+    height: 180px;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: radial-gradient(ellipse at center, rgba(34,211,238,0.06) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  .card {
+    position: relative;
+    z-index: 1;
+    width: 288px;
+    background: linear-gradient(135deg, rgba(16,24,48,0.85), rgba(12,18,34,0.95));
+    border: 1px solid rgba(34,211,238,0.12);
+    border-radius: 14px;
+    padding: 18px 20px 14px;
+    backdrop-filter: blur(8px);
+    box-shadow:
+      0 0 0 1px rgba(34,211,238,0.04),
+      0 4px 24px rgba(0,0,0,0.4);
+  }
+
+  /* --- Header --- */
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+
+  .header-icon {
+    width: 16px;
+    height: 16px;
+    color: #22d3ee;
+    opacity: 0.7;
+  }
+
+  .header h1 {
+    font-family: 'Outfit', sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 2.5px;
+    color: rgba(200,214,229,0.5);
+  }
+
+  /* --- Status row --- */
+  .status-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+
+  .dot-wrap {
+    position: relative;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #475569;
+    transition: background 0.4s ease, box-shadow 0.4s ease;
+    position: relative;
+    z-index: 2;
+  }
+
+  .dot.connected {
+    background: #22d3ee;
+    box-shadow: 0 0 8px rgba(34,211,238,0.5);
+  }
+
+  .dot.error {
+    background: #f59e0b;
+    box-shadow: 0 0 8px rgba(245,158,11,0.5);
+  }
+
+  /* animated pulse rings */
+  .pulse-ring {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(34,211,238,0.5);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .dot.connected ~ .pulse-ring {
+    animation: pulse 2.4s ease-out infinite;
+  }
+
+  .pulse-ring:nth-child(3) {
+    animation-delay: 0.8s;
+  }
+
+  .pulse-ring:nth-child(4) {
+    animation-delay: 1.6s;
+  }
+
+  @keyframes pulse {
+    0%   { width: 10px; height: 10px; opacity: 0.6; }
+    100% { width: 30px; height: 30px; opacity: 0; }
+  }
+
+  .status-text {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+
+  .status-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: #e2e8f0;
+    transition: color 0.3s;
+  }
+
+  .status-label.connected { color: #22d3ee; }
+  .status-label.error { color: #f59e0b; }
+
+  .status-sub {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: rgba(200,214,229,0.35);
+    letter-spacing: 0.3px;
+  }
+
+  /* --- Info grid --- */
+  .info-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .info-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    background: rgba(34,211,238,0.03);
+    border: 1px solid rgba(34,211,238,0.06);
+    border-radius: 8px;
+  }
+
+  .info-icon {
+    width: 13px;
+    height: 13px;
+    color: rgba(34,211,238,0.45);
+    flex-shrink: 0;
+  }
+
+  .info-content {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .info-label {
+    font-size: 8px;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: rgba(200,214,229,0.3);
+    font-weight: 500;
+    line-height: 1;
+    margin-bottom: 2px;
+  }
+
+  .info-value {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: #e2e8f0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.2;
+  }
+
+  /* --- Footer --- */
+  .footer {
+    text-align: center;
+    font-size: 9px;
+    color: rgba(200,214,229,0.2);
+    letter-spacing: 0.5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+  }
+
+  .footer-lock {
+    width: 9px;
+    height: 9px;
+    color: rgba(200,214,229,0.2);
+  }
+
+  /* error banner */
+  .error-banner {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    margin-bottom: 10px;
+    background: rgba(245,158,11,0.08);
+    border: 1px solid rgba(245,158,11,0.15);
+    border-radius: 8px;
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: #f59e0b;
+    word-break: break-word;
+  }
+
+  .error-banner.visible { display: flex; }
+
+  .error-banner svg {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+    color: #f59e0b;
+  }
+</style>
+</head>
 <body>
+  <div class="card">
+    <!-- Header -->
+    <div class="header">
+      <svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 20h.01"/>
+        <path d="M2 8.82a15 15 0 0 1 20 0"/>
+        <path d="M5 12.86a10 10 0 0 1 14 0"/>
+        <path d="M8.5 16.9a5 5 0 0 1 7 0"/>
+      </svg>
+      <h1>Mission Control</h1>
+    </div>
+
+    <!-- Status -->
+    <div class="status-row">
+      <div class="dot-wrap">
+        <div class="dot" id="statusDot"></div>
+        <div class="pulse-ring"></div>
+        <div class="pulse-ring"></div>
+        <div class="pulse-ring"></div>
+      </div>
+      <div class="status-text">
+        <span class="status-label" id="statusLabel">Connecting</span>
+        <span class="status-sub" id="statusSub">initializing relay</span>
+      </div>
+    </div>
+
+    <!-- Error banner (hidden by default) -->
+    <div class="error-banner" id="errorBanner">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+        <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+      </svg>
+      <span id="errorText"></span>
+    </div>
+
+    <!-- Info grid -->
+    <div class="info-grid">
+      <div class="info-item">
+        <!-- link icon -->
+        <svg class="info-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+        </svg>
+        <div class="info-content">
+          <span class="info-label">Room</span>
+          <span class="info-value" id="roomValue">—</span>
+        </div>
+      </div>
+      <div class="info-item">
+        <!-- users icon -->
+        <svg class="info-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+          <circle cx="9" cy="7" r="4"/>
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+          <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+        </svg>
+        <div class="info-content">
+          <span class="info-label">Peers</span>
+          <span class="info-value" id="peerCount">0</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+      <svg class="footer-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+      </svg>
+      Keep this window open to stay connected
+    </div>
+  </div>
+
 <script>
+/* ============================================================
+   ALL ORIGINAL BRIDGE FUNCTIONALITY — PRESERVED IN FULL
+   ============================================================ */
 const APP_ID = 'umershahzeb02-remote-tab-ctrl';
 const roomId = location.hash.slice(1);
 if (!roomId) { console.error('No room ID'); }
 
+// --- UI helpers ---
+const $ = (id) => document.getElementById(id);
+let peerSet = new Set();
+
+function uiReady() {
+  $('statusDot').classList.add('connected');
+  $('statusLabel').textContent = 'Connected';
+  $('statusLabel').classList.add('connected');
+  $('statusSub').textContent = 'relay active';
+}
+
+function uiError(msg) {
+  $('statusDot').classList.remove('connected');
+  $('statusDot').classList.add('error');
+  $('statusLabel').textContent = 'Error';
+  $('statusLabel').classList.remove('connected');
+  $('statusLabel').classList.add('error');
+  $('statusSub').textContent = 'connection failed';
+  $('errorBanner').classList.add('visible');
+  $('errorText').textContent = msg;
+}
+
+function uiPeerUpdate() {
+  $('peerCount').textContent = peerSet.size;
+}
+
+// Display room ID (truncate if long)
+if (roomId) {
+  const display = roomId.length > 12 ? roomId.slice(0, 5) + '...' + roomId.slice(-4) : roomId;
+  $('roomValue').textContent = display;
+  $('roomValue').title = roomId;
+}
+
+// --- Core relay logic (unchanged) ---
 let room, sendCmd, sendState;
 
 (async () => {
@@ -32,18 +417,29 @@ let room, sendCmd, sendState;
     onCmd((data) => (opener||parent).postMessage({ rc: 'cmd', data }, '*'));
     onState((data) => (opener||parent).postMessage({ rc: 'state', data }, '*'));
 
-    room.onPeerJoin((id) => (opener||parent).postMessage({ rc: 'peer-join', id }, '*'));
-    room.onPeerLeave((id) => (opener||parent).postMessage({ rc: 'peer-leave', id }, '*'));
+    room.onPeerJoin((id) => {
+      peerSet.add(id);
+      uiPeerUpdate();
+      (opener||parent).postMessage({ rc: 'peer-join', id }, '*');
+    });
+    room.onPeerLeave((id) => {
+      peerSet.delete(id);
+      uiPeerUpdate();
+      (opener||parent).postMessage({ rc: 'peer-leave', id }, '*');
+    });
 
     // Relay messages from parent page to phone
     window.addEventListener('message', (e) => {
       if (!e.data?.rc) return;
       if (e.data.rc === 'send-cmd' && sendCmd) sendCmd(e.data.data);
       if (e.data.rc === 'send-state' && sendState) sendState(e.data.data);
+      if (e.data.rc === 'ping') (opener||parent).postMessage({ rc: 'pong' }, '*');
     });
 
+    uiReady();
     (opener||parent).postMessage({ rc: 'ready' }, '*');
   } catch (e) {
+    uiError(e.message);
     (opener||parent).postMessage({ rc: 'error', msg: e.message }, '*');
   }
 })();
