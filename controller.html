@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0a0a0f">
+<title>Remote Control</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+:root{--bg:#0a0a0f;--s:#111118;--s2:#1a1a22;--b:#25252f;--t:#e4e4ec;--t2:#6b6b80;--a:#6366f1;--a2:#818cf8;--ok:#34d399;--err:#f87171}
+html,body{height:100%;overflow:hidden}
+body{font-family:-apple-system,system-ui,'Segoe UI',sans-serif;background:var(--bg);color:var(--t);display:flex;flex-direction:column;touch-action:none;user-select:none}
+
+/* Connect */
+.conn{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px}
+.conn.hide{display:none}
+.conn-icon{font-size:44px;margin-bottom:14px}
+.conn-title{font-size:20px;font-weight:700;margin-bottom:4px}
+.conn-sub{font-size:12px;color:var(--t2);margin-bottom:28px;text-align:center;line-height:1.5}
+.conn-input{width:100%;max-width:300px;background:var(--s);border:1px solid var(--b);border-radius:12px;padding:14px 18px;font-size:16px;font-weight:600;color:var(--t);font-family:'Courier New',monospace;text-align:center;outline:none}
+.conn-input:focus{border-color:var(--a)}
+.conn-input::placeholder{color:#33334a;font-weight:400}
+.conn-btn{width:100%;max-width:300px;padding:14px;background:var(--a);color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:700;font-family:inherit;cursor:pointer;margin-top:12px}
+.conn-btn:active{transform:scale(.97);background:#5558e8}
+.conn-btn:disabled{opacity:.4}
+.conn-err{color:var(--err);font-size:12px;margin-top:10px;text-align:center}
+.conn-auto{font-size:11px;color:var(--t2);margin-top:16px;text-align:center;line-height:1.5}
+
+/* Controller */
+.ctrl{flex:1;display:none;flex-direction:column}
+.ctrl.on{display:flex}
+
+.topbar{padding:10px 14px;background:var(--s);border-bottom:1px solid var(--b);display:flex;align-items:center;gap:8px;flex-shrink:0}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 6px var(--ok);flex-shrink:0}
+.ptitle{flex:1;font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dc{background:none;border:1px solid rgba(248,113,113,.2);color:var(--err);padding:5px 12px;border-radius:7px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer}
+
+.modes{display:flex;background:var(--s);border-bottom:1px solid var(--b);padding:5px 10px;gap:3px;flex-shrink:0}
+.mode{flex:1;padding:9px 6px;text-align:center;background:none;border:none;color:var(--t2);font-size:11px;font-weight:600;border-radius:8px;font-family:inherit;cursor:pointer}
+.mode:active{background:var(--s2)}
+.mode.on{background:var(--a);color:#fff}
+
+.pad{flex:1;position:relative;overflow:hidden;background:radial-gradient(circle at 50% 50%,#14141c 0%,var(--bg) 100%);display:flex;align-items:center;justify-content:center}
+.pad-hint{font-size:12px;color:#2a2a38;text-align:center;line-height:1.9;pointer-events:none}
+.pad-hint b{color:#3a3a4a}
+
+.tdot{position:absolute;width:56px;height:56px;border-radius:50%;background:rgba(99,102,241,.12);border:2px solid rgba(99,102,241,.25);pointer-events:none;transform:translate(-50%,-50%) scale(0);transition:transform .12s}
+.tdot.on{transform:translate(-50%,-50%) scale(1)}
+
+.strack{position:absolute;top:0;right:0;width:44px;height:100%;background:rgba(255,255,255,.02);border-left:1px solid var(--b)}
+.sthumb{position:absolute;left:6px;right:6px;min-height:24px;background:rgba(99,102,241,.3);border-radius:3px}
+
+.dpad{flex:1;display:flex;align-items:center;justify-content:center;background:var(--bg)}
+.dpad-c{width:220px;height:220px;position:relative}
+.dpad-b{position:absolute;width:66px;height:66px;background:var(--s2);border:1px solid var(--b);border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:24px;cursor:pointer}
+.dpad-b:active{background:var(--a);transform:scale(.92)}
+.du{top:0;left:50%;transform:translateX(-50%)}
+.dd{bottom:0;left:50%;transform:translateX(-50%)}
+.dl{left:0;top:50%;transform:translateY(-50%)}
+.dr{right:0;top:50%;transform:translateY(-50%)}
+.dc2{top:50%;left:50%;transform:translate(-50%,-50%);width:58px;height:58px;border-radius:50%;background:var(--a);border-color:var(--a2);font-size:11px;color:#fff;font-weight:700}
+
+.kbsec{padding:10px;background:var(--s);border-top:1px solid var(--b);flex-shrink:0}
+.kbrow{display:flex;gap:6px}
+.kbin{flex:1;background:var(--bg);border:1px solid var(--b);border-radius:10px;padding:12px 14px;font-size:14px;color:var(--t);font-family:inherit;outline:none}
+.kbin:focus{border-color:var(--a)}
+.kbsend{padding:12px 18px;background:var(--a);color:#fff;border:none;border-radius:10px;font-size:13px;font-weight:700;font-family:inherit}
+
+.kgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-top:8px}
+.kb{padding:12px 6px;background:var(--s2);border:1px solid var(--b);border-radius:10px;color:var(--t);text-align:center;cursor:pointer;font-size:18px;display:flex;flex-direction:column;align-items:center;gap:3px}
+.kb:active{background:var(--a);border-color:var(--a)}
+.kb .kl{font-size:8px;color:var(--t2);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.kb:active .kl{color:rgba(255,255,255,.7)}
+
+.nav{display:grid;grid-template-columns:repeat(5,1fr);gap:5px;padding:10px;background:var(--s);border-top:1px solid var(--b);flex-shrink:0}
+.nb{padding:12px 6px;background:var(--s2);border:1px solid var(--b);border-radius:10px;color:var(--t);text-align:center;cursor:pointer;font-size:18px;display:flex;flex-direction:column;align-items:center;gap:3px}
+.nb:active{background:var(--a);border-color:var(--a);transform:scale(.95)}
+.nb .nl{font-size:8px;color:var(--t2);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.nb:active .nl{color:rgba(255,255,255,.7)}
+</style>
+</head>
+<body>
+
+<div class="conn" id="cs">
+  <div class="conn-icon">📱</div>
+  <div class="conn-title">Remote Control</div>
+  <div class="conn-sub">Enter the code from your computer<br>or scan the QR code to auto-connect.</div>
+  <input class="conn-input" id="codeIn" placeholder="Enter code..." autocomplete="off" autocorrect="off" spellcheck="false">
+  <button class="conn-btn" id="goBtn">Connect</button>
+  <div class="conn-err" id="errMsg"></div>
+  <div class="conn-auto" id="autoMsg"></div>
+</div>
+
+<div class="ctrl" id="ctrl">
+  <div class="topbar">
+    <div class="dot"></div>
+    <div class="ptitle" id="pt">Connected</div>
+    <button class="dc" id="dcBtn">Disconnect</button>
+  </div>
+
+  <div class="modes">
+    <button class="mode on" data-m="pad">🖱 Pad</button>
+    <button class="mode" data-m="scroll">📜 Scroll</button>
+    <button class="mode" data-m="dpad">🎮 D-Pad</button>
+    <button class="mode" data-m="kb">⌨️ Keys</button>
+  </div>
+
+  <div class="pad" id="padArea" data-p="pad">
+    <div class="tdot" id="tdot"></div>
+    <div class="pad-hint"><b>1 finger</b> — move cursor<br><b>Tap</b> — click<br><b>2 fingers</b> — scroll<br><b>Double tap</b> — double click<br><b>Long press</b> — focus</div>
+  </div>
+
+  <div class="pad" data-p="scroll" style="display:none">
+    <div class="strack" id="strack"><div class="sthumb" id="sthumb" style="top:0;height:20%"></div></div>
+    <div class="pad-hint"><b>Swipe up/down</b> — scroll<br><b>Drag bar</b> — jump to position</div>
+  </div>
+
+  <div class="dpad" data-p="dpad" style="display:none">
+    <div class="dpad-c">
+      <div class="dpad-b du" data-a="sup">⬆</div>
+      <div class="dpad-b dd" data-a="sdn">⬇</div>
+      <div class="dpad-b dl" data-a="back">◀</div>
+      <div class="dpad-b dr" data-a="fwd">▶</div>
+      <div class="dpad-b dc2" data-a="tap">TAP</div>
+    </div>
+  </div>
+
+  <div class="pad" data-p="kb" style="display:none;flex-direction:column;justify-content:flex-start;padding:14px;gap:8px">
+    <div class="kbrow">
+      <input class="kbin" id="kbIn" placeholder="Type here..." autocomplete="off">
+      <button class="kbsend" id="kbSend">Send</button>
+    </div>
+    <div class="kgrid">
+      <div class="kb" data-k="Enter">↵<span class="kl">Enter</span></div>
+      <div class="kb" data-k="Tab">⇥<span class="kl">Tab</span></div>
+      <div class="kb" data-k="Backspace">⌫<span class="kl">Delete</span></div>
+      <div class="kb" data-k="Escape">⎋<span class="kl">Esc</span></div>
+      <div class="kb" data-k=" ">␣<span class="kl">Space</span></div>
+      <div class="kb" data-k="F5">🔄<span class="kl">Refresh</span></div>
+    </div>
+  </div>
+
+  <div class="nav">
+    <div class="nb" data-n="back">◀<span class="nl">Back</span></div>
+    <div class="nb" data-n="top">⤒<span class="nl">Top</span></div>
+    <div class="nb" data-n="reload">↻<span class="nl">Reload</span></div>
+    <div class="nb" data-n="bottom">⤓<span class="nl">Bottom</span></div>
+    <div class="nb" data-n="forward">▶<span class="nl">Fwd</span></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
+<script>
+let peer=null,conn=null,pi={scrollY:0,scrollHeight:1,viewportHeight:1,viewportWidth:1,title:''};
+
+const ICE=[
+  {urls:'stun:stun.l.google.com:19302'},
+  {urls:'stun:stun1.l.google.com:19302'},
+  {urls:'stun:stun2.l.google.com:19302'},
+  {urls:'stun:stun3.l.google.com:19302'},
+  {urls:'stun:stun4.l.google.com:19302'},
+];
+
+// Auto-fill from URL hash (QR code scanned)
+const hash=location.hash.slice(1);
+if(hash){
+  document.getElementById('codeIn').value=hash;
+  document.getElementById('autoMsg').textContent='Code detected from QR — tap Connect';
+  // Auto-connect after brief delay
+  setTimeout(connect,600);
+}
+
+document.getElementById('goBtn').addEventListener('click',connect);
+document.getElementById('codeIn').addEventListener('keydown',e=>{if(e.key==='Enter')connect()});
+
+function connect(){
+  const id=document.getElementById('codeIn').value.trim();
+  if(!id)return;
+  const btn=document.getElementById('goBtn');
+  btn.disabled=true;btn.textContent='Connecting...';
+  document.getElementById('errMsg').textContent='';
+
+  peer=new Peer(undefined,{debug:0,config:{iceServers:ICE}});
+
+  peer.on('open',()=>{
+    conn=peer.connect(id,{reliable:true});
+
+    conn.on('open',()=>{
+      document.getElementById('cs').classList.add('hide');
+      document.getElementById('ctrl').classList.add('on');
+      initCtrl();
+      send({type:'get-info'});
+    });
+
+    conn.on('data',onData);
+    conn.on('close',()=>{alert('Disconnected');location.reload()});
+    conn.on('error',e=>{
+      document.getElementById('errMsg').textContent='Connection error: '+e;
+      btn.disabled=false;btn.textContent='Connect';
+    });
+
+    setTimeout(()=>{
+      if(!conn?.open){
+        document.getElementById('errMsg').textContent='Timed out. Check the code and try again.';
+        btn.disabled=false;btn.textContent='Connect';
+      }
+    },12000);
+  });
+
+  peer.on('error',e=>{
+    document.getElementById('errMsg').textContent='Error: '+e.message;
+    btn.disabled=false;btn.textContent='Connect';
+  });
+}
+
+function send(d){if(conn?.open)conn.send(d)}
+function onData(d){
+  if(!d)return;
+  if(d.type==='page-info'){pi=d;document.getElementById('pt').textContent=d.title||d.url||'Connected';updThumb()}
+  if(d.type==='tab-closing'){alert('Tab closed');location.reload()}
+}
+function vib(ms){if(navigator.vibrate)navigator.vibrate(ms)}
+
+// Disconnect
+document.getElementById('dcBtn').addEventListener('click',()=>{send({type:'disconnect'});if(conn)conn.close();location.reload()});
+
+// Modes
+document.querySelectorAll('.mode').forEach(m=>{m.addEventListener('click',()=>{
+  document.querySelectorAll('.mode').forEach(x=>x.classList.remove('on'));m.classList.add('on');
+  document.querySelectorAll('[data-p]').forEach(p=>p.style.display='none');
+  document.querySelector(`[data-p="${m.dataset.m}"]`).style.display='flex';
+})});
+
+function initCtrl(){initPad();initScroll();initDpad();initKb();initNav()}
+
+// ===== TRACKPAD =====
+function initPad(){
+  const pad=document.getElementById('padArea'),dot=document.getElementById('tdot');
+  let tc=0,lx=0,ly=0,lx2=0,ly2=0,lastTap=0,lpT=null,moved=false;
+  const sens=1.8,sSens=3;
+  let cx=.5,cy=.5;
+
+  pad.addEventListener('touchstart',e=>{
+    tc=e.touches.length;moved=false;
+    if(tc===1){lx=e.touches[0].clientX;ly=e.touches[0].clientY;dot.style.left=lx+'px';dot.style.top=ly+'px';dot.classList.add('on');
+      lpT=setTimeout(()=>{if(!moved){send({type:'select',x:cx,y:cy});vib(30)}},600)}
+    if(tc===2){lx2=(e.touches[0].clientX+e.touches[1].clientX)/2;ly2=(e.touches[0].clientY+e.touches[1].clientY)/2}
+  },{passive:true});
+
+  pad.addEventListener('touchmove',e=>{
+    moved=true;clearTimeout(lpT);
+    if(tc===1&&e.touches.length===1){
+      const dx=(e.touches[0].clientX-lx)*sens,dy=(e.touches[0].clientY-ly)*sens;
+      lx=e.touches[0].clientX;ly=e.touches[0].clientY;
+      cx=Math.max(0,Math.min(1,cx+dx/pi.viewportWidth));
+      cy=Math.max(0,Math.min(1,cy+dy/pi.viewportHeight));
+      send({type:'cursor-move',x:cx,y:cy});
+      dot.style.left=e.touches[0].clientX+'px';dot.style.top=e.touches[0].clientY+'px';
+    }
+    if(e.touches.length===2){
+      const mx=(e.touches[0].clientX+e.touches[1].clientX)/2,my=(e.touches[0].clientY+e.touches[1].clientY)/2;
+      send({type:'scroll-smooth',dx:(mx-lx2)*-sSens,dy:(my-ly2)*-sSens});
+      lx2=mx;ly2=my;
+    }
+  },{passive:true});
+
+  pad.addEventListener('touchend',e=>{
+    dot.classList.remove('on');clearTimeout(lpT);
+    if(tc===1&&!moved){
+      const now=Date.now();
+      if(now-lastTap<300){send({type:'dblclick',x:cx,y:cy});vib(20);lastTap=0}
+      else{lastTap=now;setTimeout(()=>{if(lastTap){send({type:'click',x:cx,y:cy});vib(10)}},200)}
+    }
+    if(e.touches.length===0){send({type:'cursor-hide'});tc=0}else tc=e.touches.length;
+  },{passive:true});
+}
+
+// ===== SCROLL =====
+function initScroll(){
+  const area=document.querySelector('[data-p="scroll"]'),track=document.getElementById('strack');
+  let ly=0,td=false;
+  area.addEventListener('touchstart',e=>{if(e.target.closest('#strack')){td=true}else ly=e.touches[0].clientY},{passive:true});
+  area.addEventListener('touchmove',e=>{
+    if(td){const r=track.getBoundingClientRect();const p=Math.max(0,Math.min(1,(e.touches[0].clientY-r.top)/r.height));send({type:'scroll-to',percent:p});return}
+    const dy=(ly-e.touches[0].clientY)*4;ly=e.touches[0].clientY;send({type:'scroll-smooth',dx:0,dy:dy});
+  },{passive:true});
+  area.addEventListener('touchend',()=>{td=false},{passive:true});
+}
+function updThumb(){
+  const t=document.getElementById('sthumb');if(!t)return;
+  const p=pi.scrollY/Math.max(1,pi.scrollHeight-pi.viewportHeight);
+  const vr=pi.viewportHeight/Math.max(1,pi.scrollHeight);
+  t.style.top=(p*(1-vr)*100)+'%';t.style.height=Math.max(8,vr*100)+'%';
+}
+
+// ===== D-PAD =====
+function initDpad(){
+  const step=300;
+  document.querySelectorAll('.dpad-b').forEach(b=>{
+    let rt=null;
+    const act=()=>{vib(10);const a=b.dataset.a;
+      if(a==='sup')send({type:'scroll',dy:-step,smooth:true});
+      else if(a==='sdn')send({type:'scroll',dy:step,smooth:true});
+      else if(a==='back')send({type:'navigate',action:'back'});
+      else if(a==='fwd')send({type:'navigate',action:'forward'});
+      else if(a==='tap')send({type:'click',x:.5,y:.5})};
+    b.addEventListener('touchstart',()=>{act();if(b.dataset.a==='sup'||b.dataset.a==='sdn')rt=setInterval(act,150)},{passive:true});
+    b.addEventListener('touchend',()=>clearInterval(rt),{passive:true});
+  });
+}
+
+// ===== KEYBOARD =====
+function initKb(){
+  document.querySelectorAll('[data-k]').forEach(b=>{b.addEventListener('click',()=>{send({type:'key',key:b.dataset.k});vib(10)})});
+  document.getElementById('kbSend').addEventListener('click',()=>{const i=document.getElementById('kbIn');if(i.value){send({type:'type',text:i.value});i.value=''}});
+  document.getElementById('kbIn').addEventListener('keydown',e=>{if(e.key==='Enter'){const i=document.getElementById('kbIn');if(i.value){send({type:'type',text:i.value});i.value=''}}});
+}
+
+// ===== NAV =====
+function initNav(){document.querySelectorAll('[data-n]').forEach(b=>{b.addEventListener('click',()=>{send({type:'navigate',action:b.dataset.n});vib(15)})})}
+
+// ===== KEEPALIVE =====
+setInterval(()=>{if(conn?.open)send({type:'ping'})},8000);
+</script>
+</body>
+</html>
