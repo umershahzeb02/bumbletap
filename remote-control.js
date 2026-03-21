@@ -19,13 +19,14 @@
 
   function log(...a) { console.log('%c[Remote]', 'color:#6366f1;font-weight:bold', ...a); }
 
-  // Load trystero ESM as a global via blob URL (bypasses CSP since blob: is allowed)
+  // Load trystero from our GitHub Pages (CORS-friendly, CSP-bypassed via loadScript)
   async function loadTrystero() {
-    const res = await fetch('https://github.com/dmotz/trystero/releases/latest/download/trystero-torrent.min.js');
+    const base = CONTROLLER_URL.replace(/\/[^/]*$/, '');
+    const res = await fetch(base + '/trystero-torrent.min.js');
+    if (!res.ok) throw new Error('Failed to fetch trystero: ' + res.status);
     const code = await res.text();
     const exp = code.match(/export\{([^}]+)\}/);
     if (!exp) throw new Error('Could not parse trystero exports');
-    // Parse "Y as joinRoom, s as selfId, ..." into {joinRoom: Y, selfId: s, ...}
     const assign = exp[1].split(',').map(s => {
       const [local,, name] = s.trim().split(/\s+/);
       return `${name}:${local}`;
