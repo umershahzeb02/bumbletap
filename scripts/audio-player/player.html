@@ -269,8 +269,8 @@ window.addEventListener('message',e=>{
   if(d.type==='ping'){reply(e,{type:'pong'});return}
   if(d.type==='add'){
     if(!validTrack(d))return;
-    addTrack(d.url,d.title||deriveTitle(d.url),d.site);
-    reply(e,{type:'added',count:1});
+    const ok=addTrack(d.url,d.title||deriveTitle(d.url),d.site);
+    reply(e,{type:'added',count:ok?1:0,requested:1});
     return;
   }
   // Sent when the userscript's async ID3 read finds a better title than the
@@ -284,8 +284,8 @@ window.addEventListener('message',e=>{
   }
   if(d.type==='addMany'&&Array.isArray(d.tracks)){
     let n=0;
-    d.tracks.forEach(t=>{if(validTrack(t)){addTrack(t.url,t.title||deriveTitle(t.url),t.site);n++}});
-    reply(e,{type:'added',count:n});
+    d.tracks.forEach(t=>{if(validTrack(t)&&addTrack(t.url,t.title||deriveTitle(t.url),t.site))n++});
+    reply(e,{type:'added',count:n,requested:d.tracks.length});
   }
 });
 
@@ -354,7 +354,9 @@ function restore(){
   }catch(_){}
 }
 
-function addTrack(u,t,site){if(queue.find(x=>x.url===u))return;queue.push({url:u,title:t,site:site||null});renderQ();if(idx===-1)playIdx(0)}
+// Returns whether the track was actually added, so acks can report the truth —
+// a duplicate is a no-op, and the sender needs to know that, not "count: 1".
+function addTrack(u,t,site){if(queue.find(x=>x.url===u))return false;queue.push({url:u,title:t,site:site||null});renderQ();if(idx===-1)playIdx(0);return true}
 function playIdx(i){
   if(i<0||i>=queue.length)return;idx=i;syncState();const t=queue[idx];
   if(audio){audio.pause();audio.src=''}

@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Audio Float Player
-// @version      2.0.0
+// @version      2.1.0
 // @description  Elegant floating audio player. Detects audio, queues across pages, polished UI.
 // @match        *://*/*
 // @run-at       document-idle
@@ -62,6 +62,17 @@
 
      Registering one copy in each world without this switch would build two UIs. */
   const ROLE = (typeof AFP_ROLE !== 'undefined' && AFP_ROLE) ? String(AFP_ROLE) : 'full';
+
+  /* Version banner — deliberately loud. This script is PASTED into the
+     extension, not served, so pushing a fix does not update the running copy.
+     A whole round of debugging was lost to exactly that. If the console does
+     not show this line with the current version, the extension is running a
+     stale paste. */
+  const AFP_VERSION = '2.1.0';
+  try {
+    console.info('[AFP] audio-float-player v' + AFP_VERSION + ' — role: ' + ROLE
+      + (IN_MAIN_WORLD ? ' (MAIN world)' : ' (isolated/user-script world)'));
+  } catch (_) {}
 
   if (ROLE === 'intercept') {
     // Minimal path. Nothing below this point is defined or needed.
@@ -484,52 +495,120 @@
      BroadcastChannel. Adding is silent; a window opens only when asked for. */
 
   let bridgeFrame = null;
+  let bridgePort = null;        // MessageChannel port into the bridge — see offerPort()
   let bridgeReady = false;
   let bridgeFailed = false;     // CSP blocked the frame, or it never loaded
-  let bridgeTimer = null;
+  let bridgePoll = null;        // handshake poll timer
+  let pollTries = 0;
   let playerAlive = false;      // is a player window open anywhere? (bridge tells us)
   let pending = [];
+  let ackTimer = null;          // a flushed add MUST be acked, or we retry loudly
+  let lastFlushed = null;       // tracks in flight, restored if the ack never comes
 
-  W.addEventListener('message', e => {
-    if (e.origin !== PLAYER_ORIGIN) return;            // only trust our own origin
-    const d = e.data;
+  /* Bridge/player replies arrive on two possible channels:
+       - window 'message' events (legacy). In an extension USER_SCRIPT world it
+         was never verified in situ that these are delivered, so nothing
+         essential may depend on them.
+       - a MessageChannel port (offerPort below). A port delivers to the exact
+         JS context that created it — whatever world that is — so this channel
+         cannot be lost to world plumbing.
+     Both funnel here; everything in it is idempotent, so a message arriving on
+     both channels is harmless. */
+  function onBridgeMsg(d, viaPort) {
     if (!d || typeof d !== 'object' || d.__afp !== 1) return;
-    if (d.type === 'bridge-ready') { bridgeReady = true; flushPending(); return; }
+    if (d.type === 'bridge-ready') {
+      if (viaPort) {
+        if (!bridgePort) console.info('[AFP] bridge port established — replies no longer depend on window message delivery');
+        bridgePort = viaPort;                    // latest acked port wins; bridge keeps them all alive
+      }
+      if (!bridgeReady) {
+        bridgeReady = true;
+        console.info('[AFP] queue bridge ready via ' + (viaPort ? 'MessageChannel port' : 'window message')
+          + (d.v ? ' (bridge v' + d.v + ')' : ' (bridge pre-2.1)'));
+      }
+      stopBridgePoll();
+      flushPending();
+      return;
+    }
     // Liveness reported by the bridge, which can hear player windows heartbeat
     // on the shared origin. Cached so the decision at click time is synchronous
     // and stays inside the user gesture a popup blocker requires.
     if (d.type === 'players') { playerAlive = !!d.alive; return; }
     if (d.type === 'added') {
+      clearTimeout(ackTimer); ackTimer = null; lastFlushed = null;
       pending = [];                       // acked — stop any fallback retry loop
       if (d.count > 0) toast(d.count > 1 ? `Added ${d.count} tracks` : 'Added to queue', I.music);
+      // An add that changed nothing must still say so — silence here is how
+      // "adding does nothing" survived three rounds of fixes.
+      else toast('Already in queue', I.check);
+      return;
     }
+  }
+
+  W.addEventListener('message', e => {
+    if (e.origin !== PLAYER_ORIGIN) return;            // only trust our own origin
+    onBridgeMsg(e.data, null);
   });
 
   /* A page's CSP (frame-src / child-src) can block this iframe outright, and
-     plenty of sites do. Without a timeout that failure is invisible: the frame
-     never loads, 'bridge-ready' never fires, pending never flushes, and every
-     add is silently dropped. Detect it and fall back to talking to the player
-     window directly. */
+     plenty of sites do. And even when the frame loads, its legacy
+     parent.postMessage announcement lands as a window event the embedding
+     world might conceivably not receive. So the handshake does not wait to be
+     told: it polls the frame, offering a fresh MessageChannel port each round,
+     until one comes back acked or the attempts run out — in which case the
+     failure is surfaced loudly and adds go via the player window instead. */
   function ensureBridge() {
     if (bridgeFailed) return;
     if (bridgeFrame && bridgeFrame.isConnected) return;
+    bridgeReady = false;                  // (re)creating — old handshake state is void
+    bridgePort = null;
     bridgeFrame = document.createElement('iframe');
     bridgeFrame.src = BRIDGE_URL;
     bridgeFrame.setAttribute('aria-hidden', 'true');
     bridgeFrame.style.cssText =
       'position:absolute;width:0;height:0;border:0;opacity:0;pointer-events:none;left:-9999px;top:-9999px';
-    bridgeFrame.addEventListener('error', () => failBridge('load error'));
+    bridgeFrame.addEventListener('error', () => failBridge('frame load error'));
     (document.body || document.documentElement).appendChild(bridgeFrame);
-    clearTimeout(bridgeTimer);
-    bridgeTimer = setTimeout(() => { if (!bridgeReady) failBridge('timeout — CSP or network'); }, 4000);
+    stopBridgePoll();
+    pollTries = 0;
+    bridgePoll = setInterval(() => {
+      if (bridgeReady) { stopBridgePoll(); return; }
+      if (++pollTries > 16) {             // ~5s: 16 rounds x 300ms
+        stopBridgePoll();
+        failBridge('no handshake after 5s — frame blocked (CSP), network, or message delivery');
+        return;
+      }
+      offerPort();
+    }, 300);
+    offerPort();   // usually lands before the frame loads and is dropped; the poll covers it
+  }
+
+  function stopBridgePoll() {
+    if (bridgePoll) { clearInterval(bridgePoll); bridgePoll = null; }
+  }
+
+  /* Offer the bridge a private MessageChannel port. The transferred end talks
+     straight back to this context: replies over it cannot be dropped by
+     cross-world window-event dispatch, which is the one link in the legacy
+     path that was never verified inside the real extension. The outbound
+     postMessage itself is safe in any world — it dispatches in the IFRAME's
+     own main world, not ours. */
+  function offerPort() {
+    if (!bridgeFrame || !bridgeFrame.contentWindow) return;
+    try {
+      const ch = new MessageChannel();
+      ch.port1.onmessage = ev => onBridgeMsg(ev.data, ch.port1);
+      bridgeFrame.contentWindow.postMessage({ __afp: 1, type: 'port' }, PLAYER_ORIGIN, [ch.port2]);
+    } catch (_) {}
   }
 
   function failBridge(why) {
     if (bridgeFailed || bridgeReady) return;
     bridgeFailed = true;
-    clearTimeout(bridgeTimer);
+    stopBridgePoll();
     try { if (bridgeFrame) bridgeFrame.remove(); } catch (_) {}
     bridgeFrame = null;
+    bridgePort = null;
     toast('Queue bridge blocked here — using the player window', I.ext);
     console.warn('[AFP] queue bridge unavailable (' + why + '); falling back to the player window');
     deliverViaWindow();
@@ -541,24 +620,56 @@
   function deliverViaWindow() {
     if (!pending.length) return;
     openPlayerWindow();
-    if (!popup || popup.closed) return;
+    if (!popup || popup.closed) return;   // openPlayerWindow already toasted why
     let tries = 0;
     const iv = setInterval(() => {
       tries++;
-      if (!pending.length || tries > 40) { clearInterval(iv); return; }
-      if (!popup || popup.closed) { clearInterval(iv); return; }
+      if (!pending.length) { clearInterval(iv); return; }   // acked
+      if (tries > 40 || !popup || popup.closed) {
+        clearInterval(iv);
+        // Give up LOUDLY. The tracks may in fact have arrived (only the ack can
+        // be lost — the player dedups, so a retry is always safe), but an
+        // unconfirmed add must never just evaporate.
+        console.warn('[AFP] could not confirm delivery of ' + pending.length + ' track(s) to the player window '
+          + (popup && !popup.closed ? '(no ack after 10s)' : '(window closed)'));
+        toast('Add not confirmed — check the player', I.ext);
+        return;
+      }
       // Retry until the window is up; it acks with 'added' once it has them.
       try { popup.postMessage({ __afp: 1, type: 'addMany', tracks: pending }, PLAYER_ORIGIN); } catch (_) {}
     }, 250);
-    // The player's own 'added' reply clears pending via the message handler.
+    // The player's own 'added' reply clears pending via onBridgeMsg.
   }
 
   function flushPending() {
     if (!bridgeReady || !pending.length) return;
-    if (!bridgeFrame || !bridgeFrame.contentWindow) return;
+    if (!bridgePort && !(bridgeFrame && bridgeFrame.contentWindow)) return;
     const tracks = pending;
     pending = [];
-    bridgeFrame.contentWindow.postMessage({ __afp: 1, type: 'addMany', tracks }, PLAYER_ORIGIN);
+    // Accumulate, don't overwrite: a second flush before the first ack must not
+    // silently drop the first flight from watchdog coverage.
+    lastFlushed = (lastFlushed || []).concat(tracks);
+    /* Watchdog: a flush the bridge never acks is a lost add. Both receivers
+       dedup by URL, so re-sending is always safe — silence is the only
+       unacceptable outcome. */
+    clearTimeout(ackTimer);
+    ackTimer = setTimeout(() => {
+      ackTimer = null;
+      if (!lastFlushed) return;
+      console.warn('[AFP] add sent to the queue bridge but not acknowledged within 4s — retrying via the player window');
+      toast('Add not confirmed — retrying via player', I.ext);
+      pending = lastFlushed.concat(pending);
+      lastFlushed = null;
+      deliverViaWindow();
+    }, 4000);
+    if (bridgePort) {
+      try { bridgePort.postMessage({ __afp: 1, type: 'addMany', tracks }); return; } catch (_) {}
+    }
+    if (bridgeFrame && bridgeFrame.contentWindow) {
+      bridgeFrame.contentWindow.postMessage({ __afp: 1, type: 'addMany', tracks }, PLAYER_ORIGIN);
+    }
+    // If neither transport was usable the ack watchdog above re-queues and
+    // falls back — nothing is ever dropped without a toast and a warning.
   }
 
   function sendToPlayer(url, title, site) {
@@ -781,7 +892,9 @@
         // Rename it in the player too, if it's already been queued there
         // Through the bridge, so the rename reaches the stored queue and every
         // open player window — not just a popup this page happens to hold.
-        if (bridgeReady && bridgeFrame && bridgeFrame.contentWindow) {
+        if (bridgePort) {
+          try { bridgePort.postMessage({ __afp: 1, type: 'retitle', url, title: better }); } catch (_) {}
+        } else if (bridgeReady && bridgeFrame && bridgeFrame.contentWindow) {
           try {
             bridgeFrame.contentWindow.postMessage(
               { __afp: 1, type: 'retitle', url, title: better }, PLAYER_ORIGIN);
