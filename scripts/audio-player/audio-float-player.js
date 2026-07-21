@@ -485,6 +485,8 @@
 
   let bridgeFrame = null;
   let bridgeReady = false;
+  let bridgeFailed = false;     // CSP blocked the frame, or it never loaded
+  let bridgeTimer = null;
   let playerAlive = false;      // is a player window open anywhere? (bridge tells us)
   let pending = [];
 
@@ -497,19 +499,58 @@
     // on the shared origin. Cached so the decision at click time is synchronous
     // and stays inside the user gesture a popup blocker requires.
     if (d.type === 'players') { playerAlive = !!d.alive; return; }
-    if (d.type === 'added' && d.count > 0) {
-      toast(d.count > 1 ? `Added ${d.count} tracks` : 'Added to queue', I.music);
+    if (d.type === 'added') {
+      pending = [];                       // acked — stop any fallback retry loop
+      if (d.count > 0) toast(d.count > 1 ? `Added ${d.count} tracks` : 'Added to queue', I.music);
     }
   });
 
+  /* A page's CSP (frame-src / child-src) can block this iframe outright, and
+     plenty of sites do. Without a timeout that failure is invisible: the frame
+     never loads, 'bridge-ready' never fires, pending never flushes, and every
+     add is silently dropped. Detect it and fall back to talking to the player
+     window directly. */
   function ensureBridge() {
+    if (bridgeFailed) return;
     if (bridgeFrame && bridgeFrame.isConnected) return;
     bridgeFrame = document.createElement('iframe');
     bridgeFrame.src = BRIDGE_URL;
     bridgeFrame.setAttribute('aria-hidden', 'true');
     bridgeFrame.style.cssText =
       'position:absolute;width:0;height:0;border:0;opacity:0;pointer-events:none;left:-9999px;top:-9999px';
+    bridgeFrame.addEventListener('error', () => failBridge('load error'));
     (document.body || document.documentElement).appendChild(bridgeFrame);
+    clearTimeout(bridgeTimer);
+    bridgeTimer = setTimeout(() => { if (!bridgeReady) failBridge('timeout — CSP or network'); }, 4000);
+  }
+
+  function failBridge(why) {
+    if (bridgeFailed || bridgeReady) return;
+    bridgeFailed = true;
+    clearTimeout(bridgeTimer);
+    try { if (bridgeFrame) bridgeFrame.remove(); } catch (_) {}
+    bridgeFrame = null;
+    toast('Queue bridge blocked here — using the player window', I.ext);
+    console.warn('[AFP] queue bridge unavailable (' + why + '); falling back to the player window');
+    deliverViaWindow();
+  }
+
+  // Fallback path: hand pending tracks straight to the player window, opening
+  // one if needed. Slower and it needs a visible window, but it works where the
+  // page forbids third-party frames.
+  function deliverViaWindow() {
+    if (!pending.length) return;
+    openPlayerWindow();
+    if (!popup || popup.closed) return;
+    let tries = 0;
+    const iv = setInterval(() => {
+      tries++;
+      if (!pending.length || tries > 40) { clearInterval(iv); return; }
+      if (!popup || popup.closed) { clearInterval(iv); return; }
+      // Retry until the window is up; it acks with 'added' once it has them.
+      try { popup.postMessage({ __afp: 1, type: 'addMany', tracks: pending }, PLAYER_ORIGIN); } catch (_) {}
+    }, 250);
+    // The player's own 'added' reply clears pending via the message handler.
   }
 
   function flushPending() {
@@ -522,6 +563,7 @@
 
   function sendToPlayer(url, title, site) {
     pending.push({ url, title, site: site || pageSite() });
+    if (bridgeFailed) { deliverViaWindow(); return; }
     ensureBridge();
     if (bridgeReady) flushPending();    // otherwise 'bridge-ready' flushes
     // Open a window only when none is open anywhere. First add gets you a
