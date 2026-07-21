@@ -223,6 +223,24 @@ body{font-family:'DM Sans',-apple-system,BlinkMacSystemFont,sans-serif;backgroun
 <div class="q" id="q"><div class="empty">No tracks in queue</div></div>
 
 <script>
+/* ===== RECLAIM OUR OWN NAME =====
+   This is what made every add open a new window.
+
+   The page opens us with window.open('', '__afp_player'), which names the blank
+   window, then navigates it here. That navigation is CROSS-ORIGIN — the page is
+   some other site, we are on the player origin — and Chrome resets
+   window.name on cross-origin navigation (a privacy change in Chrome 88, so
+   names cannot leak across origins).
+
+   So by the time this document exists, the name the page gave the window has
+   already been wiped. The next page asks for '__afp_player', finds nothing, and
+   opens another window. Forever.
+
+   The reset is not a lock: the document that lands there can set the name
+   again. Doing so immediately makes this window findable by name from any page,
+   which is the whole reclaim mechanism. */
+try { window.name = '__afp_player'; } catch (_) {}
+
 const queue=[];let idx=-1,audio=null,playing=false,looping=false,shuffling=false;
 const speeds=[.5,.75,1,1.25,1.5,2];let si=2;
 const $=id=>document.getElementById(id);
