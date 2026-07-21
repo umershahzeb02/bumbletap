@@ -481,131 +481,84 @@
 
 
   /* ===== SEND TRACK =====
-     Back to the mechanism that actually worked, for the reason it worked.
+     The queue lives in the extension (chrome.storage), not in the page and not
+     in the player window. That is the only store every site can reach:
+     localStorage is partitioned for third-party frames, window.name is cleared
+     on cross-origin navigation, and a window reference dies with the page.
 
-     The popup is about:blank with the player written into it, so it is
-     SAME-ORIGIN with this page. BroadcastChannel is origin-scoped, so page and
-     popup share one — and the page finds an existing player by shouting into
-     it, not by holding a reference:
+     Adding therefore never needs to find the player window at all — it writes
+     to the extension, and the worker pushes the new queue to every tab, so an
+     open player updates wherever it is. A window is opened only when none is
+     open anywhere, which the worker answers definitively by looking for a tab
+     on the player URL. */
 
-         page:  postMessage {ping}
-         popup: postMessage {pong}
-         page:  postMessage {addMany, tracks}
+  const EXT_TIMEOUT = 700;
 
-     Nothing here depends on a window reference (dies on navigation), a window
-     name (Chrome wipes it on cross-origin navigation), or shared storage
-     (partitioned for third-party frames). Those are exactly the three things
-     that broke while the player lived on its own origin.
+  let extSeq = 0;
+  const extWaiting = Object.create(null);
+  let playerOpen = false;        // cached so the click decision is synchronous
+  let extAlive = false;
 
-     The player SOURCE is still hosted and fetched at runtime — GitHub Pages
-     sends Access-Control-Allow-Origin: *, so a plain fetch works from any site.
-     That keeps player.html editable without re-pasting this script, while the
-     popup itself stays same-origin.
+  W.addEventListener('message', e => {
+    const d = e.data;
+    if (!d || typeof d !== 'object' || d.__afp !== 1 || !d.reply) return;
+    const w = extWaiting[d.id];
+    if (w) { delete extWaiting[d.id]; w(d); }
+  });
 
-     Consequence, and it is the original behaviour: the queue is per-hostname.
-     The popup inherits the origin of the page that opened it, so browsing to a
-     different site gets its own player. */
-
-  const CHANNEL_NAME = '__afp_ch';
-  const PING_WAIT = 300;
-
-  let channel = null;
-  let pending = [];
-  let openTimer = null;
-  let opening = false;
-
-  function ensureChannel() {
-    if (channel) return channel;
-    try { channel = new BroadcastChannel(CHANNEL_NAME); } catch (_) { return null; }
-    channel.addEventListener('message', e => {
-      const d = e.data;
-      if (!d || typeof d !== 'object') return;
-      // A player answered. It exists, so hand over whatever is waiting.
-      if (d.type === 'pong' || d.type === 'ready') { clearTimeout(openTimer); flushPending(); return; }
-      if (d.type === 'added') {
-        if (d.count > 0) toast(d.count > 1 ? ('Added ' + d.count + ' tracks') : 'Added to queue', I.music);
-        else toast('Already in queue', I.check);         // never silent
-      }
+  function extCall(type, payload) {
+    return new Promise(resolve => {
+      const id = 'p' + (++extSeq);
+      extWaiting[id] = resolve;
+      try { W.postMessage(Object.assign({ __afp: 1, type: type, id: id }, payload || {}), '*'); }
+      catch (_) {}
+      setTimeout(() => {
+        if (extWaiting[id]) { delete extWaiting[id]; resolve(null); }
+      }, EXT_TIMEOUT);
     });
-    return channel;
   }
 
-  function flushPending() {
-    if (!pending.length) return;
-    const ch = ensureChannel();
-    if (!ch) return;
-    const tracks = pending;
-    pending = [];
-    try { ch.postMessage({ type: 'addMany', tracks }); }
-    catch (_) { pending = tracks; }
+  // Ask once at startup so the first click already knows whether to open a window.
+  function refreshPlayerOpen() {
+    return extCall('ext-player-open').then(r => {
+      if (r && r.ok) { extAlive = true; playerOpen = !!r.open; }
+      return playerOpen;
+    });
   }
+  refreshPlayerOpen();
 
   function popupFeatures() {
     const left = W.screenX + W.innerWidth - POPUP_W - 40, top = W.screenY + 60;
     return 'popup=yes,width=' + POPUP_W + ',height=' + POPUP_H + ',left=' + left + ',top=' + top
-         + ',resizable=yes,scrollbars=no,menubar=no,toolbar=no,location=no,status=no';
+         + ',resizable=yes,resizable=yes,scrollbars=no,menubar=no,toolbar=no,location=no,status=no';
   }
 
-  /* Opens about:blank and writes the hosted player into it. The window is
-     opened synchronously so it stays inside the click's user activation; the
-     fetch that follows is async, which is fine because the window already
-     exists by then. */
-  function openPlayerPopup() {
-    if (opening) return;
-    if (popup && !popup.closed) { try { popup.focus(); } catch (_) {} return; }
-    opening = true;
-
-    let w = null;
-    try { w = W.open('about:blank', '_blank', popupFeatures()); } catch (_) { w = null; }
-    if (!w) {
-      opening = false;
-      toast('Popup blocked — allow popups for this site', I.ext);
-      return;
-    }
-    popup = w;
-
-    fetch(PLAYER_URL, { cache: 'no-cache' })
-      .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
-      .then(html => {
-        try { w.document.open(); w.document.write(html); w.document.close(); }
-        catch (err) { throw err; }
-        toast('Player opened', I.ext);
-        // The player announces itself on the channel, which flushes `pending`.
-      })
-      .catch(err => {
-        try { w.close(); } catch (_) {}
-        popup = null;
-        toast('Could not load the player', I.ext);
-        try { console.warn('[AFP] player load failed:', err && err.message); } catch (_) {}
-      })
-      .then(() => { opening = false; });
+  function openPlayerWindow() {
+    try { popup = W.open(PLAYER_URL, '_blank', popupFeatures()); } catch (_) { popup = null; }
+    if (!popup) { toast('Popup blocked — allow popups for this site', I.ext); return; }
+    playerOpen = true;
+    toast('Player opened', I.ext);
   }
 
   function sendToPlayer(url, title, site) {
-    pending.push({ url, title, site: site || pageSite() });
-    const ch = ensureChannel();
-    if (!ch) { toast('BroadcastChannel unavailable here', I.ext); pending = []; return; }
+    const track = { url: url, title: title, site: site || pageSite() };
 
-    // Ask whether a player is already listening on this origin.
-    try { ch.postMessage({ type: 'ping' }); } catch (_) {}
+    // Open first, synchronously, while the click still counts as user activation.
+    const needWindow = !playerOpen && !(popup && !popup.closed);
+    if (needWindow) openPlayerWindow();
 
-    // No answer in time means none is open, so make one. Still within Chrome's
-    // transient user activation from the click, so the popup is not blocked.
-    clearTimeout(openTimer);
-    openTimer = setTimeout(() => {
-      if (pending.length) openPlayerPopup();
-    }, PING_WAIT);
-  }
-
-  // Explicit "open the player" button.
-  function openPlayerWindow() {
-    const ch = ensureChannel();
-    if (ch) { try { ch.postMessage({ type: 'ping' }); } catch (_) {} }
-    clearTimeout(openTimer);
-    openTimer = setTimeout(() => {
-      if (popup && !popup.closed) { try { popup.focus(); } catch (_) {} return; }
-      openPlayerPopup();
-    }, PING_WAIT);
+    extCall('ext-queue-add', { tracks: [track] }).then(r => {
+      if (!r || !r.ok) {
+        extAlive = false;
+        toast('Extension queue unavailable — see EXTENSION-QUEUE.md', I.ext);
+        try { console.warn('[AFP] no queue relay answered; cross-site queue is off'); } catch (_) {}
+        return;
+      }
+      extAlive = true;
+      if (r.count > 0) toast(r.count > 1 ? ('Added ' + r.count + ' tracks') : 'Added to queue', I.music);
+      else toast('Already in queue', I.check);
+      refreshPlayerOpen();
+    });
   }
 
   // ===== PILL & LIST =====
@@ -798,9 +751,14 @@
         src.title = better;
         if (listOpen) renderSrc();
         // Rename it in the player window if one is open and handshaken.
-        // Over the channel, same as everything else — no window reference needed.
-        const ch = ensureChannel();
-        if (ch) { try { ch.postMessage({ type: 'retitle', url, title: better }); } catch (_) {} }
+        // Retitle by rewriting the stored queue through the extension.
+        extCall('ext-queue-get').then(g => {
+          if (!g || !g.ok || !Array.isArray(g.queue)) return;
+          const t = g.queue.find(x => x.url === url);
+          if (!t || t.title === better) return;
+          t.title = better;
+          extCall('ext-queue-set', { queue: g.queue });
+        });
       }
     } catch (_) {
     } finally { id3Active--; pumpID3(); }

@@ -324,53 +324,59 @@ const STORE='__afp_queue_v1';
 const sync=new BroadcastChannel('__afp_player_sync');
 let applyingRemote=false;
 
+/* ===== EXTENSION-OWNED QUEUE =====
+   chrome.storage is the only store every site can reach. localStorage is
+   partitioned for third-party frames, so a queue kept there splits into copies
+   that never see each other. The extension's relay content script runs on this
+   page too, so we read and write through it and fall back to localStorage when
+   no extension answers (standalone / Tampermonkey). */
+let extAlive = false, extSeq = 0;
+const extWaiting = Object.create(null);
+
+window.addEventListener('message', e => {
+  const d = e.data;
+  if (!d || typeof d !== 'object' || d.__afp !== 1 || !d.reply) return;
+  if (d.type === 'ext-queue-changed') { applyQueue(d.queue); return; }
+  const w = extWaiting[d.id];
+  if (w) { delete extWaiting[d.id]; w(d); }
+});
+
+function extCall(type, payload) {
+  return new Promise(resolve => {
+    const id = 'r' + (++extSeq);
+    extWaiting[id] = resolve;
+    try { window.postMessage(Object.assign({ __afp: 1, type, id }, payload || {}), '*'); } catch (_) {}
+    setTimeout(() => { if (extWaiting[id]) { delete extWaiting[id]; resolve(null); } }, 700);
+  });
+}
+
+// Replace the queue from an authoritative source without echoing it back out.
+function applyQueue(list) {
+  if (!Array.isArray(list)) return;
+  const cur = idx >= 0 && queue[idx] ? queue[idx].url : null;
+  applyingRemote = true;
+  try {
+    queue.length = 0;
+    list.forEach(t => { if (t && typeof t.url === 'string')
+      queue.push({ url: t.url, title: t.title || deriveTitle(t.url), site: t.site || null, dur: t.dur }); });
+    idx = cur ? queue.findIndex(t => t.url === cur) : -1;   // keep playback anchored
+    renderQ();
+  } finally { applyingRemote = false; }
+}
+
 function syncState(){
   if(applyingRemote)return;                       // don't echo a change we just received
   // `dead` is a transient observation — a throttled host or a flaky connection.
   // Persisting it would brand a track permanently unplayable in every window and
   // every future session, with no way back. Duration is stable, so it stays.
   const clean=queue.map(t=>({url:t.url,title:t.title,dur:t.dur,site:t.site}));
-  try{localStorage.setItem(STORE,JSON.stringify({queue:clean,idx}))}catch(_){}
+  // Extension is authoritative when present; localStorage is the standalone path.
+  if (extAlive) extCall('ext-queue-set', { queue: clean, idx });
+  else { try{localStorage.setItem(STORE,JSON.stringify({queue:clean,idx}))}catch(_){} }
   try{sync.postMessage({type:'state',queue:clean})}catch(_){}
 }
 
-/* ===== PAGE CHANNEL =====
-   The page that opened us wrote this document into an about:blank popup, so we
-   share its origin and therefore this channel. That is how a page finds us
-   after it navigates: it shouts `ping`, we answer `pong`, it sends tracks. No
-   window reference (dies with the page), no window name (Chrome clears it on
-   cross-origin navigation), no shared storage (partitioned). */
-const page = new BroadcastChannel('__afp_ch');
 
-function pageAdd(tracks){
-  let n = 0;
-  (tracks || []).forEach(t => {
-    if (!t || typeof t.url !== 'string' || !/^https?:\/\//i.test(t.url)) return;
-    if (queue.some(x => x.url === t.url)) return;              // already here
-    addTrack(t.url, (typeof t.title === 'string' && t.title) ? t.title : deriveTitle(t.url),
-             typeof t.site === 'string' ? t.site : null);
-    n++;
-  });
-  try { page.postMessage({ type: 'added', count: n, requested: (tracks||[]).length, total: queue.length }); } catch(_){}
-}
-
-page.onmessage = e => {
-  const d = e.data;
-  if (!d || typeof d !== 'object') return;
-  if (d.type === 'ping') { try { page.postMessage({ type: 'pong' }); } catch(_){} return; }
-  if (d.type === 'addMany') { pageAdd(d.tracks); return; }
-  if (d.type === 'add')     { pageAdd([d]); return; }
-  if (d.type === 'retitle' && typeof d.url === 'string' && typeof d.title === 'string' && d.title.trim()) {
-    const t = queue.find(x => x.url === d.url);
-    if (t && t.title !== d.title) {
-      t.title = d.title; renderQ();
-      if (idx >= 0 && queue[idx] && queue[idx].url === d.url) $('nt').textContent = d.title;
-    }
-  }
-};
-
-// Announce on load so a page already waiting flushes without another ping.
-try { page.postMessage({ type: 'ready' }); } catch(_){}
 
 sync.onmessage=e=>{
   const d=e.data;
@@ -1033,6 +1039,15 @@ $('qfilter').addEventListener('keydown',e=>{
   if(e.key==='Escape'){filterText='';e.target.value='';renderQ({noSync:true})}
 });
 
-// Load any queue left by a previous session or another site's player window.
-restore();
+/* Load the queue: extension first, localStorage only if nothing answers. */
+extCall('ext-queue-get').then(r => {
+  if (r && r.ok && Array.isArray(r.queue)) {
+    extAlive = true;
+    applyQueue(r.queue);
+    try { console.info('[AFP player] queue from extension —', r.queue.length, 'tracks'); } catch (_) {}
+  } else {
+    try { console.info('[AFP player] no extension relay; using local storage (per-site queue)'); } catch (_) {}
+    restore();
+  }
+});
 </script></body></html>
