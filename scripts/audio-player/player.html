@@ -329,6 +329,18 @@ sync.onmessage=e=>{
   }finally{applyingRemote=false}
 };
 
+/* Heartbeat so the queue bridge can tell whether any player window is open.
+   The page itself can't determine this — its window reference dies on
+   navigation and it can't see across origins — which is why adding a track
+   used to spawn a new window every time. */
+(function heartbeat(){
+  const beat = () => { try { sync.postMessage({ type: 'alive' }); } catch (_) {} };
+  beat();
+  setInterval(beat, 2000);
+  // Answer an immediate poll so a freshly-loaded bridge doesn't wait for the tick.
+  sync.addEventListener('message', e => { if (e.data && e.data.type === 'poll') beat(); });
+})();
+
 function restore(){
   try{
     const s=JSON.parse(localStorage.getItem(STORE)||'null');

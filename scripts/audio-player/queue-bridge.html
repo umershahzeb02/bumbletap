@@ -99,8 +99,31 @@
     }
   });
 
+  /* Player-window liveness. Player windows heartbeat on this channel; being
+     same-origin with them, this frame can hear it and report upward. The page
+     needs this to decide whether an add should open a window — it cannot tell
+     on its own, which is exactly what caused the one-popup-per-add problem. */
+  let lastAlive = 0;
+  const isAlive = () => (Date.now() - lastAlive) < 5000;
+  let lastReported = null;
+
+  function notifyLiveness(force) {
+    const a = isAlive();
+    if (!force && a === lastReported) return;      // only speak when it changes
+    lastReported = a;
+    try { parent.postMessage({ __afp: 1, type: 'players', alive: a }, '*'); } catch (_) {}
+  }
+
+  sync.addEventListener('message', e => {
+    if (e.data && e.data.type === 'alive') { lastAlive = Date.now(); notifyLiveness(); }
+  });
+
+  try { sync.postMessage({ type: 'poll' }); } catch (_) {}   // ask immediately, don't wait a tick
+  setInterval(() => notifyLiveness(), 2000);
+
   // Tell the embedding page we're ready to accept writes.
   try { parent.postMessage({ __afp: 1, type: 'bridge-ready' }, '*'); } catch (_) {}
+  notifyLiveness(true);
 })();
 </script>
 </body>

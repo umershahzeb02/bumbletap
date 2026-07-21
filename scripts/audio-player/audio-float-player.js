@@ -485,6 +485,7 @@
 
   let bridgeFrame = null;
   let bridgeReady = false;
+  let playerAlive = false;      // is a player window open anywhere? (bridge tells us)
   let pending = [];
 
   W.addEventListener('message', e => {
@@ -492,6 +493,10 @@
     const d = e.data;
     if (!d || typeof d !== 'object' || d.__afp !== 1) return;
     if (d.type === 'bridge-ready') { bridgeReady = true; flushPending(); return; }
+    // Liveness reported by the bridge, which can hear player windows heartbeat
+    // on the shared origin. Cached so the decision at click time is synchronous
+    // and stays inside the user gesture a popup blocker requires.
+    if (d.type === 'players') { playerAlive = !!d.alive; return; }
     if (d.type === 'added' && d.count > 0) {
       toast(d.count > 1 ? `Added ${d.count} tracks` : 'Added to queue', I.music);
     }
@@ -519,6 +524,11 @@
     pending.push({ url, title, site: site || pageSite() });
     ensureBridge();
     if (bridgeReady) flushPending();    // otherwise 'bridge-ready' flushes
+    // Open a window only when none is open anywhere. First add gets you a
+    // player; later adds — including after navigating to another page — stay
+    // silent, because the bridge can hear the existing window's heartbeat.
+    // Called synchronously from the click so the popup blocker allows it.
+    if (!playerAlive) { playerAlive = true; openPlayerWindow(); }
   }
 
   // Only ever called from an explicit user action, so nothing opens by surprise.
@@ -536,6 +546,10 @@
   // ===== PILL & LIST =====
   function createPill(){
     if(pill)return;
+    // Warm the bridge as soon as there's anything to add, so player liveness is
+    // already known by the time the user clicks — otherwise the first click on
+    // a freshly-loaded page could open a duplicate window.
+    ensureBridge();
     pill=document.createElement('div');pill.className='__afp-pill';
     pill.innerHTML=`<span class="__afp-pill-icon">${I.music}</span><span style="font-weight:500">Audio</span><span class="__afp-pill-count" id="__afp-c">0</span><span class="__afp-pill-arrow">${I.chev}</span>`;
     pill.addEventListener('click',toggleList);document.body.appendChild(pill);
