@@ -499,7 +499,6 @@
      pong means we got a fresh blank window, so we load the player into it. */
 
   const PLAYER_WINDOW_NAME = '__afp_player';
-  const PONG_WAIT = 400;
 
   let playerReady = false;
   let pending = [];
@@ -532,44 +531,56 @@
          + ',resizable=yes,scrollbars=no,menubar=no,toolbar=no,location=no,status=no';
   }
 
+  /* Ask for the window by name and work out SYNCHRONOUSLY whether we got the
+     real player or a brand-new blank.
+
+     The trick is origin. A window window.open() just created is about:blank,
+     which inherits THIS page's origin, so reading its location succeeds. An
+     existing player is on the player origin, so the same read throws. That
+     one-line difference tells us which we have, immediately — no waiting on a
+     pong, which is what made the previous attempt open a window every time. */
+  function acquirePlayer() {
+    let w = null;
+    try { w = W.open('', PLAYER_WINDOW_NAME, popupFeatures()); } catch (_) { return null; }
+    if (!w) return null;
+    let fresh;
+    try { void w.location.href; fresh = true; }   // readable => about:blank => new
+    catch (_) { fresh = false; }                  // throws    => cross-origin => the player
+    return { win: w, fresh: fresh };
+  }
+
   function sendToPlayer(url, title, site) {
     pending.push({ url, title, site: site || pageSite() });
 
     // Live and handshaken already — nothing to do but send.
     if (popup && !popup.closed && playerReady) { flushPending(); return; }
 
-    // Empty URL: hands back a window already using this name WITHOUT reloading
-    // it, or a fresh blank one. Must run inside the click for the popup blocker.
-    if (!popup || popup.closed) {
-      playerReady = false;
-      try { popup = W.open('', PLAYER_WINDOW_NAME, popupFeatures()); } catch (_) { popup = null; }
-    }
-    if (!popup) {
+    // Must run inside the click, or the popup blocker refuses.
+    const got = acquirePlayer();
+    if (!got) {
       toast('Popup blocked — allow popups for this site', I.ext);
       pending = [];
       return;
     }
+    popup = got.win;
 
-    let ponged = false;
-    const onPong = e => {
-      if (e.origin !== PLAYER_ORIGIN) return;
-      const d = e.data;
-      if (d && d.__afp === 1 && (d.type === 'pong' || d.type === 'ready')) ponged = true;
-    };
-    W.addEventListener('message', onPong);
-    try { popup.postMessage({ __afp: 1, type: 'ping' }, PLAYER_ORIGIN); } catch (_) {}
-
-    setTimeout(() => {
-      W.removeEventListener('message', onPong);
-      if (ponged || playerReady) return;            // the main handler flushed already
-      // No answer: it's a blank window, so load the player into it. Navigating a
-      // window we already own is not a new popup, so this isn't blocked.
+    if (got.fresh) {
+      // Blank window: load the player into it. Navigating a window we already
+      // own is not a new popup, so this is allowed. Its 'ready' flushes.
+      playerReady = false;
       try { popup.location.href = PLAYER_URL; }
       catch (_) {
         try { popup = W.open(PLAYER_URL, PLAYER_WINDOW_NAME, popupFeatures()); } catch (_) {}
       }
-      // Its 'ready' announcement triggers the flush.
-    }, PONG_WAIT);
+      return;
+    }
+
+    // Reclaimed a player that is already loaded — send straight away. If it
+    // somehow isn't ours the message is simply ignored, and the ping/pong below
+    // keeps playerReady honest for later adds.
+    playerReady = true;
+    flushPending();
+    try { popup.postMessage({ __afp: 1, type: 'ping' }, PLAYER_ORIGIN); } catch (_) {}
   }
 
   // Explicit "open the player" action — same reclaim, no track attached.

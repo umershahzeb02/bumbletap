@@ -341,6 +341,43 @@ sync.onmessage=e=>{
   sync.addEventListener('message', e => { if (e.data && e.data.type === 'poll') beat(); });
 })();
 
+/* ===== ONE WINDOW WINS =====
+   Safety net for when the page cannot reclaim us by name — a site with
+   Cross-Origin-Opener-Policy severs that relationship, and then every add would
+   open another window and they would pile up.
+
+   Every player window is top-level on THIS origin, so unlike the page we can
+   all see each other on the shared channel. A newly-opened window asks who is
+   already here; if an older one answers, the newcomer steps aside.
+
+   It waits before closing so the tracks the page just sent it are added first —
+   those writes reach the incumbent over the same channel, so nothing is lost. */
+(function electSingleton(){
+  const BORN = Date.now() + Math.random();
+  let standingDown = false;
+
+  sync.addEventListener('message', e => {
+    const d = e.data;
+    if (!d) return;
+    if (d.type === 'who') { try { sync.postMessage({ type: 'here', born: BORN }); } catch (_) {} return; }
+    if (d.type === 'here' && typeof d.born === 'number' && d.born < BORN && !standingDown) {
+      standingDown = true;
+      try { sync.postMessage({ type: 'focus-incumbent' }); } catch (_) {}
+      // Long enough for an in-flight add to land and sync outward.
+      setTimeout(() => { try { window.close(); } catch (_) {} }, 1200);
+    }
+  });
+
+  // Incumbent pulls itself forward when a newcomer stands down.
+  sync.addEventListener('message', e => {
+    if (e.data && e.data.type === 'focus-incumbent' && !standingDown) {
+      try { window.focus(); } catch (_) {}
+    }
+  });
+
+  try { sync.postMessage({ type: 'who' }); } catch (_) {}
+})();
+
 function restore(){
   try{
     const s=JSON.parse(localStorage.getItem(STORE)||'null');
