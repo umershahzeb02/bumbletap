@@ -91,6 +91,10 @@
   // opener's origin, which is why the queue used to be trapped on one hostname.
   // Serving it from one fixed origin lets every player window share a queue.
   const PLAYER_URL   = 'https://umershahzeb02.github.io/bumbletap/scripts/audio-player/player.html';
+  // Invisible same-origin write-head into the shared queue. Adding a track goes
+  // through this, NOT through the player window — a popup reference dies with
+  // the page, so every navigation used to lose it and open another window.
+  const BRIDGE_URL   = 'https://umershahzeb02.github.io/bumbletap/scripts/audio-player/queue-bridge.html';
   const PLAYER_ORIGIN = new URL(PLAYER_URL).origin;
 
   let sources = [];
@@ -467,49 +471,66 @@
 
 
 
-  // ===== SEND TRACK =====
-  // The player is hosted on its own fixed origin, so page->player traffic goes
-  // over postMessage. Sends are buffered until the player reports 'ready',
-  // which removes the old fixed-timeout guesswork (the handshake is ~200ms but
-  // varies with load) and means N simultaneous sends open exactly one window.
+  /* ===== SEND TRACK =====
+     Adds go through a hidden iframe on the player origin, never through the
+     player window.
 
-  let playerReady = false;
+     The popup approach could not survive navigation: the window reference lives
+     in this script instance, a new page gets a fresh instance with popup=null,
+     and window-name reuse doesn't reliably carry across a navigation either. The
+     result was one new popup per add, each showing a queue one longer than the
+     last. The iframe is same-origin with the player, so it writes into the
+     shared queue directly and any open player window sees it over
+     BroadcastChannel. Adding is silent; a window opens only when asked for. */
+
+  let bridgeFrame = null;
+  let bridgeReady = false;
   let pending = [];
 
   W.addEventListener('message', e => {
-    if (e.origin !== PLAYER_ORIGIN) return;            // only trust our own player
+    if (e.origin !== PLAYER_ORIGIN) return;            // only trust our own origin
     const d = e.data;
     if (!d || typeof d !== 'object' || d.__afp !== 1) return;
-    if (d.type === 'ready') { playerReady = true; flushPending(); return; }
-    if (d.type === 'added') {
+    if (d.type === 'bridge-ready') { bridgeReady = true; flushPending(); return; }
+    if (d.type === 'added' && d.count > 0) {
       toast(d.count > 1 ? `Added ${d.count} tracks` : 'Added to queue', I.music);
     }
   });
 
-  function flushPending() {
-    if (!playerReady || !pending.length) return;
-    if (!popup || popup.closed) return;
-    const tracks = pending;
-    pending = [];
-    popup.postMessage({ __afp: 1, type: 'addMany', tracks }, PLAYER_ORIGIN);
+  function ensureBridge() {
+    if (bridgeFrame && bridgeFrame.isConnected) return;
+    bridgeFrame = document.createElement('iframe');
+    bridgeFrame.src = BRIDGE_URL;
+    bridgeFrame.setAttribute('aria-hidden', 'true');
+    bridgeFrame.style.cssText =
+      'position:absolute;width:0;height:0;border:0;opacity:0;pointer-events:none;left:-9999px;top:-9999px';
+    (document.body || document.documentElement).appendChild(bridgeFrame);
   }
 
-  // Idempotent: safe to call many times in one tick, opens at most one window.
-  function ensurePopup() {
-    if (popup && !popup.closed) return true;
-    playerReady = false;
-    const left = W.screenX + W.innerWidth - POPUP_W - 40, top = W.screenY + 60;
-    popup = W.open(PLAYER_URL, '__afp_player',
-      `popup=yes,width=${POPUP_W},height=${POPUP_H},left=${left},top=${top},resizable=yes,scrollbars=no,menubar=no,toolbar=no,location=no,status=no`);
-    if (!popup) { toast('Popup blocked — allow popups for this site', I.ext); return false; }
-    toast('Player opened', I.ext);
-    return true;
+  function flushPending() {
+    if (!bridgeReady || !pending.length) return;
+    if (!bridgeFrame || !bridgeFrame.contentWindow) return;
+    const tracks = pending;
+    pending = [];
+    bridgeFrame.contentWindow.postMessage({ __afp: 1, type: 'addMany', tracks }, PLAYER_ORIGIN);
   }
 
   function sendToPlayer(url, title, site) {
     pending.push({ url, title, site: site || pageSite() });
-    if (!ensurePopup()) { pending = []; return; }
-    if (playerReady) flushPending();   // otherwise the 'ready' handler flushes
+    ensureBridge();
+    if (bridgeReady) flushPending();    // otherwise 'bridge-ready' flushes
+  }
+
+  // Only ever called from an explicit user action, so nothing opens by surprise.
+  // Reuses the window while this page lives; after a navigation the queue is
+  // still intact in shared storage, so a fresh window picks up where it left off.
+  function openPlayerWindow() {
+    if (popup && !popup.closed) { try { popup.focus(); } catch (_) {} return; }
+    const left = W.screenX + W.innerWidth - POPUP_W - 40, top = W.screenY + 60;
+    popup = W.open(PLAYER_URL, '__afp_player',
+      `popup=yes,width=${POPUP_W},height=${POPUP_H},left=${left},top=${top},resizable=yes,scrollbars=no,menubar=no,toolbar=no,location=no,status=no`);
+    if (!popup) { toast('Popup blocked — allow popups for this site', I.ext); return; }
+    toast('Player opened', I.ext);
   }
 
   // ===== PILL & LIST =====
@@ -520,9 +541,11 @@
     pill.addEventListener('click',toggleList);document.body.appendChild(pill);
 
     listPanel=document.createElement('div');listPanel.className='__afp-list';
-    listPanel.innerHTML=`<div class="__afp-list-hdr"><span>Sources</span><button id="__afp-pa">${I.play} Play all</button></div><div class="__afp-list-scroll" id="__afp-sc"></div>`;
+    listPanel.innerHTML=`<div class="__afp-list-hdr"><span>Sources</span><span style="display:flex;gap:6px"><button id="__afp-open">${I.ext} Player</button><button id="__afp-pa">${I.play} Add all</button></span></div><div class="__afp-list-scroll" id="__afp-sc"></div>`;
     document.body.appendChild(listPanel);
     document.getElementById('__afp-pa').addEventListener('click',()=>{sources.forEach(s=>sendToPlayer(s.url,s.title,s.site));closeList()});
+    // The only path that opens a window — everything else adds silently.
+    document.getElementById('__afp-open').addEventListener('click',()=>{openPlayerWindow();closeList()});
     document.addEventListener('click',e=>{if(!listOpen)return;if(e.target.closest('.__afp-pill')||e.target.closest('.__afp-list'))return;closeList()});
   }
   function toggleList(){listOpen?closeList():openList()}
@@ -700,8 +723,13 @@
         src.title = better;
         if (listOpen) renderSrc();
         // Rename it in the player too, if it's already been queued there
-        if (popup && !popup.closed && playerReady) {
-          try { popup.postMessage({ __afp: 1, type: 'retitle', url, title: better }, PLAYER_ORIGIN); } catch (_) {}
+        // Through the bridge, so the rename reaches the stored queue and every
+        // open player window — not just a popup this page happens to hold.
+        if (bridgeReady && bridgeFrame && bridgeFrame.contentWindow) {
+          try {
+            bridgeFrame.contentWindow.postMessage(
+              { __afp: 1, type: 'retitle', url, title: better }, PLAYER_ORIGIN);
+          } catch (_) {}
         }
       }
     } catch (_) {

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>AFP queue bridge</title>
+</head>
+<body>
+<!--
+  queue-bridge.html — invisible write-head into the shared queue.
+
+  WHY THIS EXISTS
+  Adding a track used to require an open player popup, because only the player
+  origin can touch the shared queue. The page held a reference to that popup —
+  but a reference dies with the page, so every navigation lost it and the next
+  add opened ANOTHER window. Window-name reuse doesn't reliably survive a
+  navigation either, so the user ended up with one popup per add.
+
+  Loaded as a hidden iframe, this page is same-origin with player.html, so it
+  can write straight into localStorage and announce over BroadcastChannel. Any
+  open player window picks the change up instantly; if none is open, the track
+  still lands in the queue and is there when one is opened.
+
+  Adding is now silent. A popup opens only when the user asks for one.
+
+  It deliberately holds no player state and never autoplays — it is a write-head
+  and an ack, nothing more.
+-->
+<script>
+(() => {
+  'use strict';
+  const STORE = '__afp_queue_v1';
+  const sync  = new BroadcastChannel('__afp_player_sync');
+
+  const deriveTitle = u => {
+    try { return decodeURIComponent(u.split('/').pop().split('?')[0]).slice(0, 60) || 'Untitled'; }
+    catch (_) { return 'Untitled'; }
+  };
+
+  const load = () => {
+    try {
+      const s = JSON.parse(localStorage.getItem(STORE) || 'null');
+      if (s && Array.isArray(s.queue)) return { queue: s.queue, idx: typeof s.idx === 'number' ? s.idx : -1 };
+    } catch (_) {}
+    return { queue: [], idx: -1 };
+  };
+
+  const save = s => { try { localStorage.setItem(STORE, JSON.stringify(s)); } catch (_) {} };
+
+  // Same shape player.html broadcasts, so open windows apply it with no special case.
+  const announce = queue => { try { sync.postMessage({ type: 'state', queue }); } catch (_) {} };
+
+  // The parent can be any site, so origin is not restricted — the payload shape
+  // is validated strictly instead, exactly as player.html does.
+  const valid = t => t && typeof t.url === 'string' && /^https?:\/\//i.test(t.url)
+    && (t.title === undefined || t.title === null || typeof t.title === 'string')
+    && (t.site === undefined || t.site === null || (typeof t.site === 'string' && t.site.length < 200));
+
+  function reply(e, msg) {
+    try {
+      if (!e.source) return;
+      e.source.postMessage(Object.assign({ __afp: 1 }, msg),
+        e.origin && e.origin !== 'null' ? e.origin : '*');
+    } catch (_) {}
+  }
+
+  window.addEventListener('message', e => {
+    const d = e.data;
+    if (!d || typeof d !== 'object' || d.__afp !== 1) return;
+
+    if (d.type === 'addMany' && Array.isArray(d.tracks)) {
+      const s = load();
+      let added = 0;
+      d.tracks.forEach(t => {
+        if (!valid(t)) return;
+        if (s.queue.some(x => x.url === t.url)) return;      // dedup against the whole queue
+        s.queue.push({
+          url: t.url,
+          title: (typeof t.title === 'string' && t.title) ? t.title : deriveTitle(t.url),
+          site: typeof t.site === 'string' ? t.site : null
+        });
+        added++;
+      });
+      if (added) { save(s); announce(s.queue); }
+      reply(e, { type: 'added', count: added, total: s.queue.length });
+      return;
+    }
+
+    // ID3 read finished after the track was queued and found a better title.
+    if (d.type === 'retitle' && typeof d.url === 'string' && typeof d.title === 'string' && d.title.trim()) {
+      const s = load();
+      const t = s.queue.find(x => x.url === d.url);
+      if (t && t.title !== d.title) { t.title = d.title; save(s); announce(s.queue); }
+      return;
+    }
+
+    if (d.type === 'count') {
+      reply(e, { type: 'count', total: load().queue.length });
+      return;
+    }
+  });
+
+  // Tell the embedding page we're ready to accept writes.
+  try { parent.postMessage({ __afp: 1, type: 'bridge-ready' }, '*'); } catch (_) {}
+})();
+</script>
+</body>
+</html>
