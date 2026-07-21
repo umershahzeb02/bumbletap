@@ -102,10 +102,6 @@
   // opener's origin, which is why the queue used to be trapped on one hostname.
   // Serving it from one fixed origin lets every player window share a queue.
   const PLAYER_URL   = 'https://umershahzeb02.github.io/bumbletap/scripts/audio-player/player.html';
-  // Invisible same-origin write-head into the shared queue. Adding a track goes
-  // through this, NOT through the player window — a popup reference dies with
-  // the page, so every navigation used to lose it and open another window.
-  const BRIDGE_URL   = 'https://umershahzeb02.github.io/bumbletap/scripts/audio-player/queue-bridge.html';
   const PLAYER_ORIGIN = new URL(PLAYER_URL).origin;
 
   let sources = [];
@@ -483,226 +479,111 @@
 
 
   /* ===== SEND TRACK =====
-     Adds go through a hidden iframe on the player origin, never through the
-     player window.
+     Delivery is postMessage straight to the player window. It crosses origins
+     for free, with no permissions and no partitioning.
 
-     The popup approach could not survive navigation: the window reference lives
-     in this script instance, a new page gets a fresh instance with popup=null,
-     and window-name reuse doesn't reliably carry across a navigation either. The
-     result was one new popup per add, each showing a queue one longer than the
-     last. The iframe is same-origin with the player, so it writes into the
-     shared queue directly and any open player window sees it over
-     BroadcastChannel. Adding is silent; a window opens only when asked for. */
+     The previous version routed adds through a hidden same-origin iframe into
+     localStorage. That cannot work: Chrome partitions storage for third-party
+     frames by (top-level site, frame site), so the iframe wrote to
+     (their-site -> our-origin) while the player window read
+     (our-origin -> our-origin). Two buckets, never shared. The bridge reported
+     'added' truthfully and the player never saw a thing.
 
-  let bridgeFrame = null;
-  let bridgePort = null;        // MessageChannel port into the bridge — see offerPort()
-  let bridgeReady = false;
-  let bridgeFailed = false;     // CSP blocked the frame, or it never loaded
-  let bridgePoll = null;        // handshake poll timer
-  let pollTries = 0;
-  let playerAlive = false;      // is a player window open anywhere? (bridge tells us)
+     Storage still persists the queue, but only INSIDE the player window, where
+     every instance is top-level on one origin and partitioning never applies.
+
+     Reclaiming the window across navigations is the other half. A reference
+     dies with the page, so we ask for the window BY NAME with an empty URL —
+     window.open('', name) hands back an existing window WITHOUT navigating it.
+     Ping it: a pong means the player is already there and we just send. No
+     pong means we got a fresh blank window, so we load the player into it. */
+
+  const PLAYER_WINDOW_NAME = '__afp_player';
+  const PONG_WAIT = 400;
+
+  let playerReady = false;
   let pending = [];
-  let ackTimer = null;          // a flushed add MUST be acked, or we retry loudly
-  let lastFlushed = null;       // tracks in flight, restored if the ack never comes
-
-  /* Bridge/player replies arrive on two possible channels:
-       - window 'message' events (legacy). In an extension USER_SCRIPT world it
-         was never verified in situ that these are delivered, so nothing
-         essential may depend on them.
-       - a MessageChannel port (offerPort below). A port delivers to the exact
-         JS context that created it — whatever world that is — so this channel
-         cannot be lost to world plumbing.
-     Both funnel here; everything in it is idempotent, so a message arriving on
-     both channels is harmless. */
-  function onBridgeMsg(d, viaPort) {
-    if (!d || typeof d !== 'object' || d.__afp !== 1) return;
-    if (d.type === 'bridge-ready') {
-      if (viaPort) {
-        if (!bridgePort) console.info('[AFP] bridge port established — replies no longer depend on window message delivery');
-        bridgePort = viaPort;                    // latest acked port wins; bridge keeps them all alive
-      }
-      if (!bridgeReady) {
-        bridgeReady = true;
-        console.info('[AFP] queue bridge ready via ' + (viaPort ? 'MessageChannel port' : 'window message')
-          + (d.v ? ' (bridge v' + d.v + ')' : ' (bridge pre-2.1)'));
-      }
-      stopBridgePoll();
-      flushPending();
-      return;
-    }
-    // Liveness reported by the bridge, which can hear player windows heartbeat
-    // on the shared origin. Cached so the decision at click time is synchronous
-    // and stays inside the user gesture a popup blocker requires.
-    if (d.type === 'players') { playerAlive = !!d.alive; return; }
-    if (d.type === 'added') {
-      clearTimeout(ackTimer); ackTimer = null; lastFlushed = null;
-      pending = [];                       // acked — stop any fallback retry loop
-      if (d.count > 0) toast(d.count > 1 ? `Added ${d.count} tracks` : 'Added to queue', I.music);
-      // An add that changed nothing must still say so — silence here is how
-      // "adding does nothing" survived three rounds of fixes.
-      else toast('Already in queue', I.check);
-      return;
-    }
-  }
 
   W.addEventListener('message', e => {
-    if (e.origin !== PLAYER_ORIGIN) return;            // only trust our own origin
-    onBridgeMsg(e.data, null);
+    if (e.origin !== PLAYER_ORIGIN) return;
+    const d = e.data;
+    if (!d || typeof d !== 'object' || d.__afp !== 1) return;
+    // 'ready' = the window just loaded. 'pong' = a window we reclaimed is alive.
+    if (d.type === 'ready' || d.type === 'pong') { playerReady = true; flushPending(); return; }
+    if (d.type === 'added') {
+      pending = [];
+      if (d.count > 0) toast(d.count > 1 ? ('Added ' + d.count + ' tracks') : 'Added to queue', I.music);
+      else toast('Already in queue', I.check);      // never silent
+    }
   });
 
-  /* A page's CSP (frame-src / child-src) can block this iframe outright, and
-     plenty of sites do. And even when the frame loads, its legacy
-     parent.postMessage announcement lands as a window event the embedding
-     world might conceivably not receive. So the handshake does not wait to be
-     told: it polls the frame, offering a fresh MessageChannel port each round,
-     until one comes back acked or the attempts run out — in which case the
-     failure is surfaced loudly and adds go via the player window instead. */
-  function ensureBridge() {
-    if (bridgeFailed) return;
-    if (bridgeFrame && bridgeFrame.isConnected) return;
-    bridgeReady = false;                  // (re)creating — old handshake state is void
-    bridgePort = null;
-    bridgeFrame = document.createElement('iframe');
-    bridgeFrame.src = BRIDGE_URL;
-    bridgeFrame.setAttribute('aria-hidden', 'true');
-    bridgeFrame.style.cssText =
-      'position:absolute;width:0;height:0;border:0;opacity:0;pointer-events:none;left:-9999px;top:-9999px';
-    bridgeFrame.addEventListener('error', () => failBridge('frame load error'));
-    (document.body || document.documentElement).appendChild(bridgeFrame);
-    stopBridgePoll();
-    pollTries = 0;
-    bridgePoll = setInterval(() => {
-      if (bridgeReady) { stopBridgePoll(); return; }
-      if (++pollTries > 16) {             // ~5s: 16 rounds x 300ms
-        stopBridgePoll();
-        failBridge('no handshake after 5s — frame blocked (CSP), network, or message delivery');
-        return;
-      }
-      offerPort();
-    }, 300);
-    offerPort();   // usually lands before the frame loads and is dropped; the poll covers it
-  }
-
-  function stopBridgePoll() {
-    if (bridgePoll) { clearInterval(bridgePoll); bridgePoll = null; }
-  }
-
-  /* Offer the bridge a private MessageChannel port. The transferred end talks
-     straight back to this context: replies over it cannot be dropped by
-     cross-world window-event dispatch, which is the one link in the legacy
-     path that was never verified inside the real extension. The outbound
-     postMessage itself is safe in any world — it dispatches in the IFRAME's
-     own main world, not ours. */
-  function offerPort() {
-    if (!bridgeFrame || !bridgeFrame.contentWindow) return;
-    try {
-      const ch = new MessageChannel();
-      ch.port1.onmessage = ev => onBridgeMsg(ev.data, ch.port1);
-      bridgeFrame.contentWindow.postMessage({ __afp: 1, type: 'port' }, PLAYER_ORIGIN, [ch.port2]);
-    } catch (_) {}
-  }
-
-  function failBridge(why) {
-    if (bridgeFailed || bridgeReady) return;
-    bridgeFailed = true;
-    stopBridgePoll();
-    try { if (bridgeFrame) bridgeFrame.remove(); } catch (_) {}
-    bridgeFrame = null;
-    bridgePort = null;
-    toast('Queue bridge blocked here — using the player window', I.ext);
-    console.warn('[AFP] queue bridge unavailable (' + why + '); falling back to the player window');
-    deliverViaWindow();
-  }
-
-  // Fallback path: hand pending tracks straight to the player window, opening
-  // one if needed. Slower and it needs a visible window, but it works where the
-  // page forbids third-party frames.
-  function deliverViaWindow() {
-    if (!pending.length) return;
-    openPlayerWindow();
-    if (!popup || popup.closed) return;   // openPlayerWindow already toasted why
-    let tries = 0;
-    const iv = setInterval(() => {
-      tries++;
-      if (!pending.length) { clearInterval(iv); return; }   // acked
-      if (tries > 40 || !popup || popup.closed) {
-        clearInterval(iv);
-        // Give up LOUDLY. The tracks may in fact have arrived (only the ack can
-        // be lost — the player dedups, so a retry is always safe), but an
-        // unconfirmed add must never just evaporate.
-        console.warn('[AFP] could not confirm delivery of ' + pending.length + ' track(s) to the player window '
-          + (popup && !popup.closed ? '(no ack after 10s)' : '(window closed)'));
-        toast('Add not confirmed — check the player', I.ext);
-        return;
-      }
-      // Retry until the window is up; it acks with 'added' once it has them.
-      try { popup.postMessage({ __afp: 1, type: 'addMany', tracks: pending }, PLAYER_ORIGIN); } catch (_) {}
-    }, 250);
-    // The player's own 'added' reply clears pending via onBridgeMsg.
-  }
-
   function flushPending() {
-    if (!bridgeReady || !pending.length) return;
-    if (!bridgePort && !(bridgeFrame && bridgeFrame.contentWindow)) return;
+    if (!playerReady || !pending.length) return;
+    if (!popup || popup.closed) { playerReady = false; return; }
     const tracks = pending;
     pending = [];
-    // Accumulate, don't overwrite: a second flush before the first ack must not
-    // silently drop the first flight from watchdog coverage.
-    lastFlushed = (lastFlushed || []).concat(tracks);
-    /* Watchdog: a flush the bridge never acks is a lost add. Both receivers
-       dedup by URL, so re-sending is always safe — silence is the only
-       unacceptable outcome. */
-    clearTimeout(ackTimer);
-    ackTimer = setTimeout(() => {
-      ackTimer = null;
-      if (!lastFlushed) return;
-      console.warn('[AFP] add sent to the queue bridge but not acknowledged within 4s — retrying via the player window');
-      toast('Add not confirmed — retrying via player', I.ext);
-      pending = lastFlushed.concat(pending);
-      lastFlushed = null;
-      deliverViaWindow();
-    }, 4000);
-    if (bridgePort) {
-      try { bridgePort.postMessage({ __afp: 1, type: 'addMany', tracks }); return; } catch (_) {}
-    }
-    if (bridgeFrame && bridgeFrame.contentWindow) {
-      bridgeFrame.contentWindow.postMessage({ __afp: 1, type: 'addMany', tracks }, PLAYER_ORIGIN);
-    }
-    // If neither transport was usable the ack watchdog above re-queues and
-    // falls back — nothing is ever dropped without a toast and a warning.
+    try { popup.postMessage({ __afp: 1, type: 'addMany', tracks }, PLAYER_ORIGIN); }
+    catch (_) { pending = tracks; }                 // keep them for the next attempt
+  }
+
+  function popupFeatures() {
+    const left = W.screenX + W.innerWidth - POPUP_W - 40, top = W.screenY + 60;
+    return 'popup=yes,width=' + POPUP_W + ',height=' + POPUP_H + ',left=' + left + ',top=' + top
+         + ',resizable=yes,scrollbars=no,menubar=no,toolbar=no,location=no,status=no';
   }
 
   function sendToPlayer(url, title, site) {
     pending.push({ url, title, site: site || pageSite() });
-    if (bridgeFailed) { deliverViaWindow(); return; }
-    ensureBridge();
-    if (bridgeReady) flushPending();    // otherwise 'bridge-ready' flushes
-    // Open a window only when none is open anywhere. First add gets you a
-    // player; later adds — including after navigating to another page — stay
-    // silent, because the bridge can hear the existing window's heartbeat.
-    // Called synchronously from the click so the popup blocker allows it.
-    if (!playerAlive) { playerAlive = true; openPlayerWindow(); }
+
+    // Live and handshaken already — nothing to do but send.
+    if (popup && !popup.closed && playerReady) { flushPending(); return; }
+
+    // Empty URL: hands back a window already using this name WITHOUT reloading
+    // it, or a fresh blank one. Must run inside the click for the popup blocker.
+    if (!popup || popup.closed) {
+      playerReady = false;
+      try { popup = W.open('', PLAYER_WINDOW_NAME, popupFeatures()); } catch (_) { popup = null; }
+    }
+    if (!popup) {
+      toast('Popup blocked — allow popups for this site', I.ext);
+      pending = [];
+      return;
+    }
+
+    let ponged = false;
+    const onPong = e => {
+      if (e.origin !== PLAYER_ORIGIN) return;
+      const d = e.data;
+      if (d && d.__afp === 1 && (d.type === 'pong' || d.type === 'ready')) ponged = true;
+    };
+    W.addEventListener('message', onPong);
+    try { popup.postMessage({ __afp: 1, type: 'ping' }, PLAYER_ORIGIN); } catch (_) {}
+
+    setTimeout(() => {
+      W.removeEventListener('message', onPong);
+      if (ponged || playerReady) return;            // the main handler flushed already
+      // No answer: it's a blank window, so load the player into it. Navigating a
+      // window we already own is not a new popup, so this isn't blocked.
+      try { popup.location.href = PLAYER_URL; }
+      catch (_) {
+        try { popup = W.open(PLAYER_URL, PLAYER_WINDOW_NAME, popupFeatures()); } catch (_) {}
+      }
+      // Its 'ready' announcement triggers the flush.
+    }, PONG_WAIT);
   }
 
-  // Only ever called from an explicit user action, so nothing opens by surprise.
-  // Reuses the window while this page lives; after a navigation the queue is
-  // still intact in shared storage, so a fresh window picks up where it left off.
+  // Explicit "open the player" action — same reclaim, no track attached.
   function openPlayerWindow() {
     if (popup && !popup.closed) { try { popup.focus(); } catch (_) {} return; }
-    const left = W.screenX + W.innerWidth - POPUP_W - 40, top = W.screenY + 60;
-    popup = W.open(PLAYER_URL, '__afp_player',
-      `popup=yes,width=${POPUP_W},height=${POPUP_H},left=${left},top=${top},resizable=yes,scrollbars=no,menubar=no,toolbar=no,location=no,status=no`);
+    try { popup = W.open(PLAYER_URL, PLAYER_WINDOW_NAME, popupFeatures()); } catch (_) { popup = null; }
     if (!popup) { toast('Popup blocked — allow popups for this site', I.ext); return; }
+    playerReady = false;
     toast('Player opened', I.ext);
   }
 
   // ===== PILL & LIST =====
   function createPill(){
     if(pill)return;
-    // Warm the bridge as soon as there's anything to add, so player liveness is
-    // already known by the time the user clicks — otherwise the first click on
-    // a freshly-loaded page could open a duplicate window.
-    ensureBridge();
     pill=document.createElement('div');pill.className='__afp-pill';
     pill.innerHTML=`<span class="__afp-pill-icon">${I.music}</span><span style="font-weight:500">Audio</span><span class="__afp-pill-count" id="__afp-c">0</span><span class="__afp-pill-arrow">${I.chev}</span>`;
     pill.addEventListener('click',toggleList);document.body.appendChild(pill);
@@ -889,16 +770,9 @@
       if (src && better.length > 2 && better !== src.title) {
         src.title = better;
         if (listOpen) renderSrc();
-        // Rename it in the player too, if it's already been queued there
-        // Through the bridge, so the rename reaches the stored queue and every
-        // open player window — not just a popup this page happens to hold.
-        if (bridgePort) {
-          try { bridgePort.postMessage({ __afp: 1, type: 'retitle', url, title: better }); } catch (_) {}
-        } else if (bridgeReady && bridgeFrame && bridgeFrame.contentWindow) {
-          try {
-            bridgeFrame.contentWindow.postMessage(
-              { __afp: 1, type: 'retitle', url, title: better }, PLAYER_ORIGIN);
-          } catch (_) {}
+        // Rename it in the player window if one is open and handshaken.
+        if (popup && !popup.closed && playerReady) {
+          try { popup.postMessage({ __afp: 1, type: 'retitle', url, title: better }, PLAYER_ORIGIN); } catch (_) {}
         }
       }
     } catch (_) {
