@@ -96,13 +96,15 @@
   const POPUP_H = 560;
   const TOAST_MS = 2800;
 
-  // ===== HOSTED PAGES =====
-  // Both live in the same GitHub Pages repo. The player MUST be hosted rather
-  // than written into an about:blank popup — an about:blank window inherits the
-  // opener's origin, which is why the queue used to be trapped on one hostname.
-  // Serving it from one fixed origin lets every player window share a queue.
-  const PLAYER_URL   = 'https://umershahzeb02.github.io/bumbletap/scripts/audio-player/player.html';
-  const PLAYER_ORIGIN = new URL(PLAYER_URL).origin;
+  /* ===== HOSTED PLAYER SOURCE =====
+     Fetched at runtime and written into an about:blank popup, NOT opened as a
+     URL. The popup then shares this page's origin, which is what lets
+     BroadcastChannel reach it — see SEND TRACK below for why that matters.
+
+     Hosting the source anyway means player.html can be edited and redeployed
+     without re-pasting this script into the extension. GitHub Pages sends
+     Access-Control-Allow-Origin: *, so the fetch works from any site. */
+  const PLAYER_URL = 'https://umershahzeb02.github.io/bumbletap/scripts/audio-player/player.html';
 
   let sources = [];
   let sourceUrls = new Set();
@@ -479,50 +481,63 @@
 
 
   /* ===== SEND TRACK =====
-     Delivery is postMessage straight to the player window. It crosses origins
-     for free, with no permissions and no partitioning.
+     Back to the mechanism that actually worked, for the reason it worked.
 
-     The previous version routed adds through a hidden same-origin iframe into
-     localStorage. That cannot work: Chrome partitions storage for third-party
-     frames by (top-level site, frame site), so the iframe wrote to
-     (their-site -> our-origin) while the player window read
-     (our-origin -> our-origin). Two buckets, never shared. The bridge reported
-     'added' truthfully and the player never saw a thing.
+     The popup is about:blank with the player written into it, so it is
+     SAME-ORIGIN with this page. BroadcastChannel is origin-scoped, so page and
+     popup share one — and the page finds an existing player by shouting into
+     it, not by holding a reference:
 
-     Storage still persists the queue, but only INSIDE the player window, where
-     every instance is top-level on one origin and partitioning never applies.
+         page:  postMessage {ping}
+         popup: postMessage {pong}
+         page:  postMessage {addMany, tracks}
 
-     Reclaiming the window across navigations is the other half. A reference
-     dies with the page, so we ask for the window BY NAME with an empty URL —
-     window.open('', name) hands back an existing window WITHOUT navigating it.
-     Ping it: a pong means the player is already there and we just send. No
-     pong means we got a fresh blank window, so we load the player into it. */
+     Nothing here depends on a window reference (dies on navigation), a window
+     name (Chrome wipes it on cross-origin navigation), or shared storage
+     (partitioned for third-party frames). Those are exactly the three things
+     that broke while the player lived on its own origin.
 
-  const PLAYER_WINDOW_NAME = '__afp_player';
+     The player SOURCE is still hosted and fetched at runtime — GitHub Pages
+     sends Access-Control-Allow-Origin: *, so a plain fetch works from any site.
+     That keeps player.html editable without re-pasting this script, while the
+     popup itself stays same-origin.
 
-  let playerReady = false;
+     Consequence, and it is the original behaviour: the queue is per-hostname.
+     The popup inherits the origin of the page that opened it, so browsing to a
+     different site gets its own player. */
+
+  const CHANNEL_NAME = '__afp_ch';
+  const PING_WAIT = 300;
+
+  let channel = null;
   let pending = [];
+  let openTimer = null;
+  let opening = false;
 
-  W.addEventListener('message', e => {
-    if (e.origin !== PLAYER_ORIGIN) return;
-    const d = e.data;
-    if (!d || typeof d !== 'object' || d.__afp !== 1) return;
-    // 'ready' = the window just loaded. 'pong' = a window we reclaimed is alive.
-    if (d.type === 'ready' || d.type === 'pong') { playerReady = true; flushPending(); return; }
-    if (d.type === 'added') {
-      pending = [];
-      if (d.count > 0) toast(d.count > 1 ? ('Added ' + d.count + ' tracks') : 'Added to queue', I.music);
-      else toast('Already in queue', I.check);      // never silent
-    }
-  });
+  function ensureChannel() {
+    if (channel) return channel;
+    try { channel = new BroadcastChannel(CHANNEL_NAME); } catch (_) { return null; }
+    channel.addEventListener('message', e => {
+      const d = e.data;
+      if (!d || typeof d !== 'object') return;
+      // A player answered. It exists, so hand over whatever is waiting.
+      if (d.type === 'pong' || d.type === 'ready') { clearTimeout(openTimer); flushPending(); return; }
+      if (d.type === 'added') {
+        if (d.count > 0) toast(d.count > 1 ? ('Added ' + d.count + ' tracks') : 'Added to queue', I.music);
+        else toast('Already in queue', I.check);         // never silent
+      }
+    });
+    return channel;
+  }
 
   function flushPending() {
-    if (!playerReady || !pending.length) return;
-    if (!popup || popup.closed) { playerReady = false; return; }
+    if (!pending.length) return;
+    const ch = ensureChannel();
+    if (!ch) return;
     const tracks = pending;
     pending = [];
-    try { popup.postMessage({ __afp: 1, type: 'addMany', tracks }, PLAYER_ORIGIN); }
-    catch (_) { pending = tracks; }                 // keep them for the next attempt
+    try { ch.postMessage({ type: 'addMany', tracks }); }
+    catch (_) { pending = tracks; }
   }
 
   function popupFeatures() {
@@ -531,65 +546,66 @@
          + ',resizable=yes,scrollbars=no,menubar=no,toolbar=no,location=no,status=no';
   }
 
-  /* Ask for the window by name and work out SYNCHRONOUSLY whether we got the
-     real player or a brand-new blank.
+  /* Opens about:blank and writes the hosted player into it. The window is
+     opened synchronously so it stays inside the click's user activation; the
+     fetch that follows is async, which is fine because the window already
+     exists by then. */
+  function openPlayerPopup() {
+    if (opening) return;
+    if (popup && !popup.closed) { try { popup.focus(); } catch (_) {} return; }
+    opening = true;
 
-     The trick is origin. A window window.open() just created is about:blank,
-     which inherits THIS page's origin, so reading its location succeeds. An
-     existing player is on the player origin, so the same read throws. That
-     one-line difference tells us which we have, immediately — no waiting on a
-     pong, which is what made the previous attempt open a window every time. */
-  function acquirePlayer() {
     let w = null;
-    try { w = W.open('', PLAYER_WINDOW_NAME, popupFeatures()); } catch (_) { return null; }
-    if (!w) return null;
-    let fresh;
-    try { void w.location.href; fresh = true; }   // readable => about:blank => new
-    catch (_) { fresh = false; }                  // throws    => cross-origin => the player
-    return { win: w, fresh: fresh };
+    try { w = W.open('about:blank', '_blank', popupFeatures()); } catch (_) { w = null; }
+    if (!w) {
+      opening = false;
+      toast('Popup blocked — allow popups for this site', I.ext);
+      return;
+    }
+    popup = w;
+
+    fetch(PLAYER_URL, { cache: 'no-cache' })
+      .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+      .then(html => {
+        try { w.document.open(); w.document.write(html); w.document.close(); }
+        catch (err) { throw err; }
+        toast('Player opened', I.ext);
+        // The player announces itself on the channel, which flushes `pending`.
+      })
+      .catch(err => {
+        try { w.close(); } catch (_) {}
+        popup = null;
+        toast('Could not load the player', I.ext);
+        try { console.warn('[AFP] player load failed:', err && err.message); } catch (_) {}
+      })
+      .then(() => { opening = false; });
   }
 
   function sendToPlayer(url, title, site) {
     pending.push({ url, title, site: site || pageSite() });
+    const ch = ensureChannel();
+    if (!ch) { toast('BroadcastChannel unavailable here', I.ext); pending = []; return; }
 
-    // Live and handshaken already — nothing to do but send.
-    if (popup && !popup.closed && playerReady) { flushPending(); return; }
+    // Ask whether a player is already listening on this origin.
+    try { ch.postMessage({ type: 'ping' }); } catch (_) {}
 
-    // Must run inside the click, or the popup blocker refuses.
-    const got = acquirePlayer();
-    if (!got) {
-      toast('Popup blocked — allow popups for this site', I.ext);
-      pending = [];
-      return;
-    }
-    popup = got.win;
-
-    if (got.fresh) {
-      // Blank window: load the player into it. Navigating a window we already
-      // own is not a new popup, so this is allowed. Its 'ready' flushes.
-      playerReady = false;
-      try { popup.location.href = PLAYER_URL; }
-      catch (_) {
-        try { popup = W.open(PLAYER_URL, PLAYER_WINDOW_NAME, popupFeatures()); } catch (_) {}
-      }
-      return;
-    }
-
-    // Reclaimed a player that is already loaded — send straight away. If it
-    // somehow isn't ours the message is simply ignored, and the ping/pong below
-    // keeps playerReady honest for later adds.
-    playerReady = true;
-    flushPending();
-    try { popup.postMessage({ __afp: 1, type: 'ping' }, PLAYER_ORIGIN); } catch (_) {}
+    // No answer in time means none is open, so make one. Still within Chrome's
+    // transient user activation from the click, so the popup is not blocked.
+    clearTimeout(openTimer);
+    openTimer = setTimeout(() => {
+      if (pending.length) openPlayerPopup();
+    }, PING_WAIT);
   }
 
-  // Explicit "open the player" action — same reclaim, no track attached.
+  // Explicit "open the player" button.
   function openPlayerWindow() {
-    if (popup && !popup.closed) { try { popup.focus(); } catch (_) {} return; }
-    try { popup = W.open(PLAYER_URL, PLAYER_WINDOW_NAME, popupFeatures()); } catch (_) { popup = null; }
-    if (!popup) { toast('Popup blocked — allow popups for this site', I.ext); return; }
-    playerReady = false;
-    toast('Player opened', I.ext);
+    const ch = ensureChannel();
+    if (ch) { try { ch.postMessage({ type: 'ping' }); } catch (_) {} }
+    clearTimeout(openTimer);
+    openTimer = setTimeout(() => {
+      if (popup && !popup.closed) { try { popup.focus(); } catch (_) {} return; }
+      openPlayerPopup();
+    }, PING_WAIT);
   }
 
   // ===== PILL & LIST =====
@@ -782,9 +798,9 @@
         src.title = better;
         if (listOpen) renderSrc();
         // Rename it in the player window if one is open and handshaken.
-        if (popup && !popup.closed && playerReady) {
-          try { popup.postMessage({ __afp: 1, type: 'retitle', url, title: better }, PLAYER_ORIGIN); } catch (_) {}
-        }
+        // Over the channel, same as everything else — no window reference needed.
+        const ch = ensureChannel();
+        if (ch) { try { ch.postMessage({ type: 'retitle', url, title: better }); } catch (_) {} }
       }
     } catch (_) {
     } finally { id3Active--; pumpID3(); }

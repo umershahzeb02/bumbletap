@@ -334,6 +334,44 @@ function syncState(){
   try{sync.postMessage({type:'state',queue:clean})}catch(_){}
 }
 
+/* ===== PAGE CHANNEL =====
+   The page that opened us wrote this document into an about:blank popup, so we
+   share its origin and therefore this channel. That is how a page finds us
+   after it navigates: it shouts `ping`, we answer `pong`, it sends tracks. No
+   window reference (dies with the page), no window name (Chrome clears it on
+   cross-origin navigation), no shared storage (partitioned). */
+const page = new BroadcastChannel('__afp_ch');
+
+function pageAdd(tracks){
+  let n = 0;
+  (tracks || []).forEach(t => {
+    if (!t || typeof t.url !== 'string' || !/^https?:\/\//i.test(t.url)) return;
+    if (queue.some(x => x.url === t.url)) return;              // already here
+    addTrack(t.url, (typeof t.title === 'string' && t.title) ? t.title : deriveTitle(t.url),
+             typeof t.site === 'string' ? t.site : null);
+    n++;
+  });
+  try { page.postMessage({ type: 'added', count: n, requested: (tracks||[]).length, total: queue.length }); } catch(_){}
+}
+
+page.onmessage = e => {
+  const d = e.data;
+  if (!d || typeof d !== 'object') return;
+  if (d.type === 'ping') { try { page.postMessage({ type: 'pong' }); } catch(_){} return; }
+  if (d.type === 'addMany') { pageAdd(d.tracks); return; }
+  if (d.type === 'add')     { pageAdd([d]); return; }
+  if (d.type === 'retitle' && typeof d.url === 'string' && typeof d.title === 'string' && d.title.trim()) {
+    const t = queue.find(x => x.url === d.url);
+    if (t && t.title !== d.title) {
+      t.title = d.title; renderQ();
+      if (idx >= 0 && queue[idx] && queue[idx].url === d.url) $('nt').textContent = d.title;
+    }
+  }
+};
+
+// Announce on load so a page already waiting flushes without another ping.
+try { page.postMessage({ type: 'ready' }); } catch(_){}
+
 sync.onmessage=e=>{
   const d=e.data;
   if(!d||d.type!=='state'||!Array.isArray(d.queue))return;
