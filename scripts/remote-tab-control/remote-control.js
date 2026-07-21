@@ -8,7 +8,7 @@
 
 (() => {
   // ========== CONFIGURATION ==========
-  const CONTROLLER_URL = 'https://umershahzeb02.github.io/remote-tab-control/controller.html';
+  const CONTROLLER_URL = 'https://umershahzeb02.github.io/bumbletap/scripts/remote-tab-control/controller.html';
   // Persist room ID across page navigations so bridge popup stays connected
   const STORED_ROOM = sessionStorage.getItem('__rc_room');
   const ROOM_ID = STORED_ROOM || 'rc-' + Math.random().toString(36).substring(2, 10);
