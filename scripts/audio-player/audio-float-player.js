@@ -96,14 +96,15 @@
   const POPUP_H = 560;
   const TOAST_MS = 2800;
 
-  /* ===== HOSTED PLAYER SOURCE =====
-     Fetched at runtime and written into an about:blank popup, NOT opened as a
-     URL. The popup then shares this page's origin, which is what lets
-     BroadcastChannel reach it — see SEND TRACK below for why that matters.
+  /* ===== HOSTED PLAYER =====
+     Opened as a URL, so every player window lands on this one fixed origin no
+     matter which site opened it. That is what lets windows opened from
+     different hostnames share a queue and see each other on a
+     BroadcastChannel — the old about:blank popup inherited the opener's origin
+     and so could never do either.
 
-     Hosting the source anyway means player.html can be edited and redeployed
-     without re-pasting this script into the extension. GitHub Pages sends
-     Access-Control-Allow-Origin: *, so the fetch works from any site. */
+     Hosting it also means player.html can be edited and redeployed without
+     re-pasting this script into the extension. */
   const PLAYER_URL = 'https://umershahzeb02.github.io/bumbletap/scripts/audio-player/player.html';
 
   let sources = [];
@@ -481,16 +482,23 @@
 
 
   /* ===== SEND TRACK =====
-     The queue lives in the extension (chrome.storage), not in the page and not
-     in the player window. That is the only store every site can reach:
-     localStorage is partitioned for third-party frames, window.name is cleared
-     on cross-origin navigation, and a window reference dies with the page.
+     Two independent delivery paths, because either one can be missing:
 
-     Adding therefore never needs to find the player window at all — it writes
-     to the extension, and the worker pushes the new queue to every tab, so an
-     open player updates wherever it is. A window is opened only when none is
-     open anywhere, which the worker answers definitively by looking for a tab
-     on the player URL. */
+       postMessage -> the open player window
+         Works with no extension at all. This is the path that must never be
+         skipped — it is the only one that exists for a plain Tampermonkey
+         install.
+
+       ext-queue-add -> chrome.storage, via the relay
+         Durable across reloads and readable from every site, which
+         postMessage is not. The worker pushes the new queue to every tab, so
+         a player open in some other window updates too.
+
+     Relying on the extension alone was the bug: with no relay answering, the
+     add resolved null, a toast fired, and the track was dropped on the floor —
+     while the window that had just been opened for it closed itself as a
+     duplicate. addTrack() in the player dedupes by URL, so running both paths
+     never doubles a track. */
 
   const EXT_TIMEOUT = 700;
 
@@ -530,28 +538,123 @@
   function popupFeatures() {
     const left = W.screenX + W.innerWidth - POPUP_W - 40, top = W.screenY + 60;
     return 'popup=yes,width=' + POPUP_W + ',height=' + POPUP_H + ',left=' + left + ',top=' + top
-         + ',resizable=yes,resizable=yes,scrollbars=no,menubar=no,toolbar=no,location=no,status=no';
+         + ',resizable=yes,scrollbars=no,menubar=no,toolbar=no,location=no,status=no';
+  }
+
+  let ready = false;      // the player has answered our handshake
+  const pending = [];     // tracks buffered while it loads
+
+  /* ===== ACQUIRE THE PLAYER WINDOW =====
+     Opening by NAME rather than '_blank' is what stops every add from spawning
+     a duplicate. '_blank' means "always make a new one", which it dutifully
+     did; the new window then found the incumbent on the shared channel, lost
+     the election, and closed itself. Open, close, track gone.
+
+     The player sets window.name = '__afp_player' as its first statement
+     precisely so a named open can find it again.
+
+     The URL is deliberately empty. W.open(PLAYER_URL, name) would *navigate*
+     an existing player, restarting whatever is playing. W.open('', name)
+     returns the live window untouched and only creates a blank one when there
+     is genuinely nothing there — which we then send to the player URL
+     ourselves.
+
+     Reading w.location is the newness test: a blank window we just opened is
+     same-origin and readable, a loaded player is cross-origin and throws, and
+     that throw is itself the proof that it already exists. */
+  function acquirePlayer() {
+    if (popup && !popup.closed) return popup;   // known-good, handshake still valid
+
+    let w = null;
+    try { w = W.open('', '__afp_player', popupFeatures()); } catch (_) { w = null; }
+    if (!w) { toast('Popup blocked — allow popups for this site', I.ext); return null; }
+
+    // Any window we did not already hold a live reference to is unproven: it may
+    // be mid-load with no listener attached. Posting to it would drop the track
+    // silently, so make it prove itself before we flush anything.
+    ready = false;
+
+    let blank = false;
+    try { blank = !w.location.href || w.location.href === 'about:blank'; } catch (_) { blank = false; }
+    if (blank) {
+      try { w.location.href = PLAYER_URL; } catch (_) { return null; }
+      toast('Player opened', I.ext);
+    }
+    popup = w;
+    playerOpen = true;
+    return w;
   }
 
   function openPlayerWindow() {
-    try { popup = W.open(PLAYER_URL, '_blank', popupFeatures()); } catch (_) { popup = null; }
-    if (!popup) { toast('Popup blocked — allow popups for this site', I.ext); return; }
+    const w = acquirePlayer();
+    if (w) { try { w.focus(); } catch (_) {} }
+    return w;
+  }
+
+  function flushPending() {
+    if (!pending.length || !popup || popup.closed) return;
+    const batch = pending.splice(0, pending.length);
+    try { popup.postMessage({ __afp: 1, type: 'addMany', tracks: batch }, '*'); } catch (_) {}
+  }
+
+  W.addEventListener('message', e => {
+    const d = e.data;
+    if (!d || typeof d !== 'object' || d.__afp !== 1) return;
+    if (d.type !== 'ready' && d.type !== 'pong') return;
+    // Only adopt an unsolicited sender when we have nothing — otherwise any
+    // page on the site could claim to be the player and swallow our tracks.
+    if (e.source && (!popup || popup.closed)) popup = e.source;
+    ready = true;
     playerOpen = true;
-    toast('Player opened', I.ext);
+    flushPending();
+  });
+
+  /* The player's 'ready' announcement is a single shot fired at load. It is
+     missed whenever the window was already open before this page existed, so
+     we ping until something answers rather than waiting for it. */
+  let handshaking = false;
+  function handshake() {
+    if (handshaking) return;            // one interval, however many adds queue up
+    handshaking = true;
+    let tries = 0;
+    const t = setInterval(() => {
+      if (ready || !popup || popup.closed || ++tries > 24) {
+        clearInterval(t);
+        handshaking = false;
+        // Never let tracks rot in the buffer without saying so.
+        if (!ready && pending.length && !extAlive) {
+          toast('Player did not respond — track not added', I.ext);
+          try { console.warn('[AFP] player window never answered; ' + pending.length + ' track(s) undelivered'); } catch (_) {}
+          pending.length = 0;
+        }
+        return;
+      }
+      try { popup.postMessage({ __afp: 1, type: 'ping' }, '*'); } catch (_) {}
+    }, 250);
   }
 
   function sendToPlayer(url, title, site) {
     const track = { url: url, title: title, site: site || pageSite() };
 
-    // Open first, synchronously, while the click still counts as user activation.
-    const needWindow = !playerOpen && !(popup && !popup.closed);
-    if (needWindow) openPlayerWindow();
+    // Acquire first, synchronously, while the click still counts as user
+    // activation — a popup opened from a .then() is blocked.
+    const w = acquirePlayer();
 
+    // Path 1: straight to the window. Buffered until it answers, because a
+    // window that is still loading has no message listener attached yet.
+    if (w) {
+      pending.push(track);
+      if (ready) flushPending();
+      else handshake();
+    }
+
+    // Path 2: the durable, cross-site copy.
     extCall('ext-queue-add', { tracks: [track] }).then(r => {
       if (!r || !r.ok) {
+        if (extAlive) { try { console.warn('[AFP] queue relay stopped answering; cross-site queue is off'); } catch (_) {} }
         extAlive = false;
-        toast('Extension queue unavailable — see EXTENSION-QUEUE.md', I.ext);
-        try { console.warn('[AFP] no queue relay answered; cross-site queue is off'); } catch (_) {}
+        // Not a failure: path 1 delivered it. Only the cross-site copy is lost.
+        if (w) toast('Added to queue', I.music);
         return;
       }
       extAlive = true;

@@ -324,6 +324,20 @@ const STORE='__afp_queue_v1';
 const sync=new BroadcastChannel('__afp_player_sync');
 let applyingRemote=false;
 
+/* A 'state' message REPLACES the receiver's queue wholesale, so broadcasting one
+   is a claim to be authoritative. Two moments where that claim is false:
+
+     before `loaded`   we haven't read the stored queue yet, so ours is empty or
+                       holds only what was just handed to us. A window that
+                       broadcasts here wipes the real queue in every other
+                       window — the "track vanished" report.
+     after `standingDown`  we lost the singleton election and are about to close.
+                       Nothing a dying window says should overwrite the survivor.
+
+   Both stay silent instead, and hand their tracks over with 'adopt', which
+   merges. */
+let loaded=false,standingDown=false;
+
 /* ===== EXTENSION-OWNED QUEUE =====
    chrome.storage is the only store every site can reach. localStorage is
    partitioned for third-party frames, so a queue kept there splits into copies
@@ -366,6 +380,7 @@ function applyQueue(list) {
 
 function syncState(){
   if(applyingRemote)return;                       // don't echo a change we just received
+  if(!loaded||standingDown)return;                // not authoritative — see above
   // `dead` is a transient observation — a throttled host or a flaky connection.
   // Persisting it would brand a track permanently unplayable in every window and
   // every future session, with no way back. Duration is stable, so it stays.
@@ -380,7 +395,16 @@ function syncState(){
 
 sync.onmessage=e=>{
   const d=e.data;
-  if(!d||d.type!=='state'||!Array.isArray(d.queue))return;
+  if(!d)return;
+  // A departing window handing over what it holds. Merge — addTrack dedupes by
+  // URL, so anything we already have is a no-op and nothing is displaced.
+  if(d.type==='adopt'&&Array.isArray(d.tracks)&&!standingDown){
+    let n=0;
+    d.tracks.forEach(t=>{if(validTrack(t)&&addTrack(t.url,t.title||deriveTitle(t.url),t.site))n++});
+    if(n)qToast(n>1?('Adopted '+n+' tracks'):'Track added');
+    return;
+  }
+  if(d.type!=='state'||!Array.isArray(d.queue))return;
   const cur=idx>=0&&queue[idx]?queue[idx].url:null;   // keep our own playback anchored
   applyingRemote=true;
   try{
@@ -412,11 +436,12 @@ sync.onmessage=e=>{
    all see each other on the shared channel. A newly-opened window asks who is
    already here; if an older one answers, the newcomer steps aside.
 
-   It waits before closing so the tracks the page just sent it are added first —
-   those writes reach the incumbent over the same channel, so nothing is lost. */
+   It waits before closing so the tracks the page just sent it are added first,
+   then hands them to the incumbent with 'adopt'. That is a MERGE, not the
+   wholesale replace a 'state' broadcast would do — a window that closes holding
+   one track must not leave the survivor holding only that track. */
 (function electSingleton(){
   const BORN = Date.now() + Math.random();
-  let standingDown = false;
 
   sync.addEventListener('message', e => {
     const d = e.data;
@@ -425,8 +450,11 @@ sync.onmessage=e=>{
     if (d.type === 'here' && typeof d.born === 'number' && d.born < BORN && !standingDown) {
       standingDown = true;
       try { sync.postMessage({ type: 'focus-incumbent' }); } catch (_) {}
-      // Long enough for an in-flight add to land and sync outward.
-      setTimeout(() => { try { window.close(); } catch (_) {} }, 1200);
+      // Long enough for an in-flight add to land, then pass everything on.
+      setTimeout(() => {
+        try { if (queue.length) sync.postMessage({ type: 'adopt', tracks: queue.map(t => ({ url: t.url, title: t.title, site: t.site, dur: t.dur })) }); } catch (_) {}
+        setTimeout(() => { try { window.close(); } catch (_) {} }, 250);
+      }, 1200);
     }
   });
 
@@ -446,8 +474,9 @@ function restore(){
     if(!s||!Array.isArray(s.queue)||!s.queue.length)return;
     applyingRemote=true;                            // load without re-broadcasting
     try{
-      // push directly rather than via addTrack, so restoring never autoplays
-      s.queue.forEach(t=>{if(t&&typeof t.url==='string')queue.push({url:t.url,title:t.title||deriveTitle(t.url),site:t.site||null})});
+      // push directly rather than via addTrack, so restoring never autoplays —
+      // but still dedupe, or a track the opener already handed us comes back twice
+      s.queue.forEach(t=>{if(t&&typeof t.url==='string'&&!queue.some(x=>x.url===t.url))queue.push({url:t.url,title:t.title||deriveTitle(t.url),site:t.site||null})});
       renderQ();
     }finally{applyingRemote=false}
   }catch(_){}
@@ -1039,8 +1068,15 @@ $('qfilter').addEventListener('keydown',e=>{
   if(e.key==='Escape'){filterText='';e.target.value='';renderQ({noSync:true})}
 });
 
-/* Load the queue: extension first, localStorage only if nothing answers. */
+/* Load the queue: extension first, localStorage only if nothing answers.
+
+   The opener starts posting tracks the moment it opens this window, so by the
+   time the stored queue arrives there may already be tracks here that the store
+   has never seen. applyQueue() replaces wholesale, which would drop exactly the
+   track the user just clicked — so hold them aside and merge them back on top.
+   addTrack dedupes by URL, so a track that IS in the store costs nothing. */
 extCall('ext-queue-get').then(r => {
+  const early = queue.map(t => ({ url: t.url, title: t.title, site: t.site }));
   if (r && r.ok && Array.isArray(r.queue)) {
     extAlive = true;
     applyQueue(r.queue);
@@ -1049,5 +1085,8 @@ extCall('ext-queue-get').then(r => {
     try { console.info('[AFP player] no extension relay; using local storage (per-site queue)'); } catch (_) {}
     restore();
   }
+  early.forEach(t => addTrack(t.url, t.title, t.site));
+  loaded = true;          // only now is our picture complete enough to broadcast
+  syncState();
 });
 </script></body></html>

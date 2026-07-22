@@ -111,5 +111,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 Reload the extension, re-paste `audio-float-player.js` once. Done.
 
-The player and page both fall back to `localStorage` if no extension answers, so
-nothing breaks if the relay is missing — you just lose cross-site.
+## Without the extension
+
+The relay is an upgrade, not a requirement. With no extension answering:
+
+- the **page** delivers each track straight to the player window over
+  `postMessage`, buffered until the window handshakes back;
+- the **player** persists to `localStorage` instead of `chrome.storage`.
+
+What you lose is only the cross-site part — the queue becomes per-origin, and it
+is not shared with a player window opened from a different site.
+
+Both paths run whenever both are available; `addTrack()` dedupes by URL, so a
+track arriving twice is a no-op.
