@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Audio Float Player
-// @version      2.1.0
+// @version      2.2.0
 // @description  Elegant floating audio player. Detects audio, queues across pages, polished UI.
 // @match        *://*/*
 // @run-at       document-idle
@@ -68,7 +68,7 @@
      A whole round of debugging was lost to exactly that. If the console does
      not show this line with the current version, the extension is running a
      stale paste. */
-  const AFP_VERSION = '2.1.0';
+  const AFP_VERSION = '2.2.0';
   try {
     console.info('[AFP] audio-float-player v' + AFP_VERSION + ' — role: ' + ROLE
       + (IN_MAIN_WORLD ? ' (MAIN world)' : ' (isolated/user-script world)'));
@@ -595,7 +595,11 @@
 
   function openPlayerWindow() {
     const w = acquirePlayer(false);
-    if (w) { try { w.focus(); } catch (_) {} }
+    if (!w) return null;
+    try { w.focus(); } catch (_) {}
+    // This is the escape hatch offered when delivery failed, so it has to
+    // actually drain the buffer rather than just show the window.
+    if (pending.length) { if (ready) flushPending(); else handshake(); }
     return w;
   }
 
@@ -644,12 +648,25 @@
   function sendToPlayer(url, title, site) {
     const track = { url: url, title: title, site: site || pageSite() };
 
-    // Acquire first, synchronously, while the click still counts as user
-    // activation — a popup opened from a .then() is blocked.
-    const w = acquirePlayer(true);
+    /* Reach for a window only when there is reason to believe none exists.
 
-    // Path 1: straight to the window. Buffered until it answers, because a
-    // window that is still loading has no message listener attached yet.
+       W.open resolves a window NAME only inside the caller's browsing context
+       group, so from a tab that did not open the player it cannot find it and
+       silently makes a second one. That is why adds from one site landed in the
+       existing window while a site open in another tab kept spawning its own.
+
+       The extension answers the question properly — it looks for a tab on the
+       player URL, which crosses tabs — so when it says a player is open, trust
+       that and let the queue write below be the delivery. Only when nothing
+       authoritative says otherwise do we open a window ourselves, and that has
+       to happen synchronously, while the click still counts as user activation:
+       a popup opened from a .then() is blocked. */
+    const live = popup && !popup.closed;
+    const openElsewhere = extAlive && playerOpen;
+    const w = live ? popup : (openElsewhere ? null : acquirePlayer(true));
+
+    // Path 1: straight to the window we hold. Buffered until it answers,
+    // because a window that is still loading has no listener attached yet.
     if (w) {
       pending.push(track);
       if (ready) flushPending();
@@ -661,8 +678,15 @@
       if (!r || !r.ok) {
         if (extAlive) { try { console.warn('[AFP] queue relay stopped answering; cross-site queue is off'); } catch (_) {} }
         extAlive = false;
-        // Not a failure: path 1 delivered it. Only the cross-site copy is lost.
-        if (w) toast('Added to queue', I.music);
+        if (w) { toast('Added to queue', I.music); return; }   // path 1 covered it
+        /* We skipped opening a window because the extension claimed one was
+           open, and then the extension did not answer. Nothing delivered this
+           track. We cannot open a window from here — the user activation is
+           long gone — so clear the stale belief, keep the track, and let the
+           next add (or the Player button) flush it. */
+        playerOpen = false;
+        pending.push(track);
+        toast('Player unreachable — click Player to deliver', I.ext);
         return;
       }
       extAlive = true;
