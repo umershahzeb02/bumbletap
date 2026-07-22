@@ -533,11 +533,36 @@ function playIdx(i){
     else if(shuffling){playIdx(Math.floor(Math.random()*queue.length))}
     else if(idx<queue.length-1){playIdx(idx+1)}
     else renderQ()});
+  /* ===== SITE-LOCKED STREAMS =====
+     Some hosts gate their media on a session cookie belonging to the site the
+     track was grabbed from. That cookie is same-site there and third-party
+     here, so Chrome drops it and the request comes back 403 — the track plays
+     on its own site and nowhere else.
+
+     The extension is the only party that can still present it: a background
+     fetch to that host carries the cookie, and a declarativeNetRequest rule can
+     attach it to OUR media requests too. So on the first failure, ask it to
+     authorize the host and try once more. A media element reports no status
+     code, only "it broke", so we cannot tell 403 from a genuinely dead link up
+     front — attempting authorization and seeing whether it helps IS the test. */
   audio.addEventListener('error',()=>{
-    $('err').textContent='Cannot load audio — check URL';$('err').classList.add('show');
+    if(!t.__authTried&&extAlive){
+      t.__authTried=true;
+      $('err').textContent='Authorizing with '+siteOf(t)+'…';$('err').classList.add('show');
+      extCall('ext-authorize',{url:t.url,site:t.site}).then(r=>{
+        if(r&&r.ok&&r.authorized&&idx===i){playIdx(i);return}   // still on this track
+        failTrack(r&&r.ok?'Site-locked stream — no cookie for '+siteOf(t):'Cannot load audio — check URL');
+      });
+      return;
+    }
+    failTrack(t.__authTried?'Site-locked stream — '+siteOf(t)+' will not serve it here'
+                           :'Cannot load audio — check URL');
+  });
+  function failTrack(msg){
+    $('err').textContent=msg;$('err').classList.add('show');
     // Flag the row too, so a dead link is visible in the queue and not just here
     if(queue[i]){queue[i].dead=true;queue[i].dur=null;renderQ()}
-  });
+  }
   audio.play().then(()=>{playing=true;$('pp').innerHTML=pauseIcon;$('nart').classList.add('spin')}).catch(()=>{});
   renderQ();updateVol();
   if('mediaSession' in navigator)navigator.mediaSession.metadata=new MediaMetadata({title:t.title});

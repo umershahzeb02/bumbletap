@@ -9,7 +9,7 @@ Paste these three things into your extension. Nothing else is required.
 window.addEventListener('message', e => {
   const d = e.data;
   if (e.source !== window || !d || d.__afp !== 1 || d.reply) return;
-  if (!['ext-queue-get','ext-queue-add','ext-queue-set','ext-player-open'].includes(d.type)) return;
+  if (!['ext-queue-get','ext-queue-add','ext-queue-set','ext-player-open','ext-authorize'].includes(d.type)) return;
 
   chrome.runtime.sendMessage({ type: 'afp-queue', op: d.type, payload: d }, r => {
     window.postMessage({
@@ -18,7 +18,8 @@ window.addEventListener('message', e => {
       queue: r && r.queue ? r.queue : null,
       count: r && typeof r.count === 'number' ? r.count : 0,
       total: r && typeof r.total === 'number' ? r.total : 0,
-      open:  !!(r && r.open)
+      open:  !!(r && r.open),
+      authorized: !!(r && r.authorized)
     }, '*');
   });
 });
@@ -81,6 +82,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (count) { await afpSave(state); afpBroadcast(state.queue); }
       sendResponse({ ok: true, count, total: state.queue.length });
 
+    } else if (msg.op === 'ext-authorize') {
+      const ok = await afpAuthorize(msg.payload.url, msg.payload.site);
+      sendResponse({ ok: true, authorized: ok });
+
     } else if (msg.op === 'ext-queue-set') {
       const q = Array.isArray(msg.payload.queue) ? msg.payload.queue.filter(afpValid) : [];
       state.queue = q;
@@ -97,10 +102,84 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 ```
 
-## 3. manifest.json
+## 3. Also append to `background.js` — site-locked streams
+
+Some hosts serve audio only to requests carrying a session cookie for the site
+the track came from. `stream.audiochan.com` is one: the cookie is same-site on
+an audiochan page and third-party in the player, so Chrome drops it and the
+media 403s. The track plays on its own site and nowhere else.
+
+The extension is the only party that can still present it. Replaying the cookie
+is legitimate — it goes to the host that issued it and nowhere else, and the
+rule is scoped by target URL so nothing else on the web sees it.
+
+```js
+const AFP_RULE_BASE = 9000;
+const afpAuthorized = new Map();          // media host -> dynamic rule id
+
+// Good enough for the hosts this handles. Not PSL-accurate, so a .co.uk style
+// domain matches more broadly than ideal — cookies still only ever travel to
+// the host that set them, so the blast radius is unchanged.
+const afpRegistrable = h => {
+  const p = String(h).replace(/^www\./, '').split('.');
+  return p.length > 2 ? p.slice(-2).join('.') : p.join('.');
+};
+
+async function afpAuthorize(mediaUrl, siteHint) {
+  let host;
+  try { host = new URL(mediaUrl).hostname; } catch (_) { return false; }
+  if (afpAuthorized.has(host)) return true;          // rule already installed
+
+  /* Two domains matter and they are usually different: the media host
+     (stream.example.com) and the page the track was grabbed from
+     (example.com). It is the page's session that authorizes the stream. */
+  const domains = new Set([afpRegistrable(host)]);
+  if (siteHint) domains.add(afpRegistrable(siteHint));
+
+  const jar = [];
+  for (const d of domains) {
+    try { jar.push(...await chrome.cookies.getAll({ domain: d })); } catch (_) {}
+  }
+  if (!jar.length) return false;
+
+  // One value per name; the most specific domain wins.
+  const byName = new Map();
+  for (const c of jar.sort((a, b) => a.domain.length - b.domain.length)) byName.set(c.name, c);
+  const value = [...byName.values()].map(c => c.name + '=' + c.value).join('; ');
+  if (!value) return false;
+
+  const id = AFP_RULE_BASE + afpAuthorized.size;
+  try {
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: [id],
+      addRules: [{
+        id, priority: 1,
+        condition: { urlFilter: '||' + host + '/', resourceTypes: ['media', 'xmlhttprequest'] },
+        action: { type: 'modifyHeaders',
+                  requestHeaders: [{ header: 'cookie', operation: 'set', value }] }
+      }]
+    });
+  } catch (e) {
+    // Chrome may refuse to let an extension set the Cookie header at all. If so
+    // this is where you find out — the player falls back to reporting the track
+    // as site-locked rather than pretending it worked.
+    console.warn('[AFP] cookie rule rejected:', e && e.message);
+    return false;
+  }
+  afpAuthorized.set(host, id);
+  console.info('[AFP] authorized', host, 'with', byName.size, 'cookies');
+  return true;
+}
+```
+
+## 4. manifest.json
 
 ```jsonc
-"permissions": ["userScripts", "storage", "tabs"],
+"permissions": [
+  "userScripts", "storage", "tabs",
+  "cookies", "declarativeNetRequestWithHostAccess"
+],
+"host_permissions": ["*://*/*"],
 "content_scripts": [
   { "matches": ["*://*/*"], "world": "ISOLATED",
     "run_at": "document_idle", "js": ["afp-queue-relay.js"] }
