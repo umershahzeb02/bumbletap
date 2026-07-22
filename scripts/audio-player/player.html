@@ -436,10 +436,33 @@ sync.onmessage=e=>{
    all see each other on the shared channel. A newly-opened window asks who is
    already here; if an older one answers, the newcomer steps aside.
 
-   It waits before closing so the tracks the page just sent it are added first,
-   then hands them to the incumbent with 'adopt'. That is a MERGE, not the
-   wholesale replace a 'state' broadcast would do — a window that closes holding
-   one track must not leave the survivor holding only that track. */
+   A window that stands down does NOT just close. It becomes a relay: whatever
+   its opener sends is forwarded to the incumbent with 'adopt' — a MERGE, not
+   the wholesale replace a 'state' broadcast would do — and only then does it
+   close.
+
+   Closing on a fixed timer instead is what lost tracks when the add came from a
+   second site. Window names are scoped to a browsing context group, so a page
+   in another tab cannot find the existing player by name and always opens a
+   duplicate. That duplicate has to load a page before it can receive anything,
+   and when the load ran past the timer the window closed while the track was
+   still in flight. Waiting for the track rather than for the clock is the
+   difference. */
+const RELAY_GRACE = 6000;   // nothing arrived yet — it may still be in flight
+const RELAY_QUIET = 800;    // something arrived — brief wait for stragglers
+let relayTimer = null;
+
+function relayToIncumbent(){
+  if(!standingDown)return;
+  if(queue.length){
+    try{sync.postMessage({type:'adopt',tracks:queue.map(t=>({url:t.url,title:t.title,site:t.site,dur:t.dur}))})}catch(_){}
+    queue.length=0;idx=-1;              // handed over — never send the same track twice
+    renderQ({noSync:true});             // noSync: a relay is never authoritative
+  }
+  clearTimeout(relayTimer);
+  relayTimer=setTimeout(()=>{try{window.close()}catch(_){}},RELAY_QUIET);
+}
+
 (function electSingleton(){
   const BORN = Date.now() + Math.random();
 
@@ -449,12 +472,16 @@ sync.onmessage=e=>{
     if (d.type === 'who') { try { sync.postMessage({ type: 'here', born: BORN }); } catch (_) {} return; }
     if (d.type === 'here' && typeof d.born === 'number' && d.born < BORN && !standingDown) {
       standingDown = true;
-      try { sync.postMessage({ type: 'focus-incumbent' }); } catch (_) {}
-      // Long enough for an in-flight add to land, then pass everything on.
-      setTimeout(() => {
-        try { if (queue.length) sync.postMessage({ type: 'adopt', tracks: queue.map(t => ({ url: t.url, title: t.title, site: t.site, dur: t.dur })) }); } catch (_) {}
-        setTimeout(() => { try { window.close(); } catch (_) {} }, 250);
-      }, 1200);
+      // Only surface the incumbent when the user actually asked to SEE a player
+      // (the Player button opens us with #show). Doing it on every add threw the
+      // user out of the page they were reading to a window they never requested.
+      if (location.hash === '#show') { try { sync.postMessage({ type: 'focus-incumbent' }); } catch (_) {} }
+      if (audio) { try { audio.pause(); } catch (_) {} }   // a relay must not play
+      // Hand over anything already here, then wait for the opener's delivery.
+      // addTrack() calls back in for each arrival, which restarts the timer.
+      relayToIncumbent();
+      clearTimeout(relayTimer);
+      relayTimer = setTimeout(() => { try { window.close(); } catch (_) {} }, RELAY_GRACE);
     }
   });
 
@@ -484,7 +511,15 @@ function restore(){
 
 // Returns whether the track was actually added, so acks can report the truth —
 // a duplicate is a no-op, and the sender needs to know that, not "count: 1".
-function addTrack(u,t,site){if(queue.find(x=>x.url===u))return false;queue.push({url:u,title:t,site:site||null});renderQ();if(idx===-1)playIdx(0);return true}
+// While standing down we are a relay: forward instead of playing, and let the
+// arrival reset the close timer so a burst of adds is never cut off halfway.
+function addTrack(u,t,site){
+  if(queue.find(x=>x.url===u))return false;
+  queue.push({url:u,title:t,site:site||null});renderQ();
+  if(standingDown){relayToIncumbent();return true}
+  if(idx===-1)playIdx(0);
+  return true;
+}
 function playIdx(i){
   if(i<0||i>=queue.length)return;idx=i;syncState();const t=queue[idx];
   if(audio){audio.pause();audio.src=''}

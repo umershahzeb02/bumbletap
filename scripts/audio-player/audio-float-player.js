@@ -562,7 +562,11 @@
      Reading w.location is the newness test: a blank window we just opened is
      same-origin and readable, a loaded player is cross-origin and throws, and
      that throw is itself the proof that it already exists. */
-  function acquirePlayer() {
+  /* keepFocus: adding a track should not yank the user out of the page they are
+     reading. W.open always raises whatever it targets and there is no way to
+     ask it not to, so the only remedy is to take focus straight back. The
+     explicit Player button passes false — there the user asked to see it. */
+  function acquirePlayer(keepFocus) {
     if (popup && !popup.closed) return popup;   // known-good, handshake still valid
 
     let w = null;
@@ -577,16 +581,20 @@
     let blank = false;
     try { blank = !w.location.href || w.location.href === 'about:blank'; } catch (_) { blank = false; }
     if (blank) {
-      try { w.location.href = PLAYER_URL; } catch (_) { return null; }
+      // #show tells the player the user asked to LOOK at it, so that a window
+      // which turns out to be a duplicate knows whether surfacing the incumbent
+      // is wanted or just an interruption.
+      try { w.location.href = PLAYER_URL + (keepFocus ? '' : '#show'); } catch (_) { return null; }
       toast('Player opened', I.ext);
     }
     popup = w;
     playerOpen = true;
+    if (keepFocus) { try { W.focus(); } catch (_) {} }
     return w;
   }
 
   function openPlayerWindow() {
-    const w = acquirePlayer();
+    const w = acquirePlayer(false);
     if (w) { try { w.focus(); } catch (_) {} }
     return w;
   }
@@ -638,7 +646,7 @@
 
     // Acquire first, synchronously, while the click still counts as user
     // activation — a popup opened from a .then() is blocked.
-    const w = acquirePlayer();
+    const w = acquirePlayer(true);
 
     // Path 1: straight to the window. Buffered until it answers, because a
     // window that is still loading has no message listener attached yet.
