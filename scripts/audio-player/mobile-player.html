@@ -114,6 +114,9 @@ body{
 .empty .steps{text-align:left;font-size:12px;color:var(--t2);line-height:2;background:var(--s1);
   border:1px solid var(--sep);border-radius:12px;padding:14px 18px}
 .empty .steps b{color:var(--acc2);font-weight:700}
+.recv-bar{width:210px;max-width:72vw;height:7px;border-radius:4px;background:rgba(255,255,255,.1);overflow:hidden}
+.recv-fill{height:100%;background:var(--acc);width:0;transition:width .3s ease}
+.recv-count{font-family:'SF Mono',Menlo,monospace;font-size:13px;font-weight:700;color:var(--acc2);letter-spacing:.08em}
 
 .err{font-size:11px;color:#ff6b6b;text-align:center;padding:8px var(--pad);
   display:none;font-weight:500;line-height:1.5}
@@ -198,6 +201,13 @@ body{
   </div>
 </div>
 
+<div class="empty" id="recv" style="display:none">
+  <h2 id="recvh">Receiving…</h2>
+  <p id="recvp">Scan the next code on your computer.</p>
+  <div class="recv-bar"><div class="recv-fill" id="recvfill"></div></div>
+  <div class="recv-count" id="recvcount">0 / 0</div>
+</div>
+
 <div class="gate" id="gate">
   <button class="gate-btn" id="gatebtn" aria-label="Start playback">
     <svg width="38" height="38" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.14v14l11-7-11-7z"/></svg>
@@ -249,14 +259,90 @@ body{
     try {
       var obj = JSON.parse(unb64url(params.q));
       var base = obj.b || '';
-      return (obj.t || []).map(function(pair){
+      var tracks = (obj.t || []).map(function(pair){
         var url = base + pair[1];
         var title = pair[0] || decodeURIComponent(url.split('/').pop().split('?')[0]).slice(0,70) || 'Untitled';
         return { title: title, url: url };
       });
+      // s/c/n are present only on a multi-part handoff. Absent → a lone code,
+      // which is the format every earlier link used, so old links still work.
+      var n = parseInt(params.n, 10); if(!(n > 0)) n = 1;
+      var c = parseInt(params.c, 10); if(!(c > 0)) c = 1;
+      return { tracks: tracks, sid: params.s || null, c: c, n: n };
     } catch(e){
       return null;
     }
+  }
+
+  /* ---------- multi-part reassembly ----------
+     A queue too large for one QR is split across several codes on the computer.
+     Each scan opens this page afresh — phones tend to spawn a new tab per scan —
+     so the parts can't accumulate in memory. They pool in localStorage under the
+     transfer's session id, and whichever scan completes the set boots the player
+     with the whole queue. Abandoned pools are swept so they never linger. */
+  var XKEY = 'afp_xfer_';
+  var XTTL = 15 * 60 * 1000;
+
+  function xferSweep(){
+    var now = Date.now(), rm = [];
+    try {
+      for(var i = 0; i < localStorage.length; i++){
+        var k = localStorage.key(i);
+        if(k && k.indexOf(XKEY) === 0){
+          var v; try { v = JSON.parse(localStorage.getItem(k)); } catch(e){ v = null; }
+          if(!v || !v.ts || now - v.ts > XTTL) rm.push(k);
+        }
+      }
+    } catch(e){}
+    rm.forEach(function(k){ try { localStorage.removeItem(k); } catch(e){} });
+  }
+
+  function showReceiving(have, n){
+    $('app').style.display = 'none';
+    $('empty').style.display = 'none';
+    $('recv').style.display = 'flex';
+    $('recvh').textContent = 'Receiving… ' + have + ' of ' + n;
+    $('recvp').textContent = 'Scan the next code on your computer.';
+    $('recvcount').textContent = have + ' / ' + n;
+    $('recvfill').style.width = Math.round(have / n * 100) + '%';
+  }
+
+  function handleIncoming(inc){
+    if(!inc || !inc.tracks || !inc.tracks.length) return false;
+    // Strip the payload so a reload or accidental share-back never re-imports it.
+    history.replaceState(null, '', location.pathname + location.search);
+
+    // A lone code: play immediately, exactly as handoffs always have.
+    if(inc.n <= 1 || !inc.sid){
+      start(inc.tracks, 0, 0);
+      toast('Received ' + inc.tracks.length + ' track' + (inc.tracks.length > 1 ? 's' : ''));
+      return true;
+    }
+
+    // A part of a larger transfer: fold it into the pool for its session.
+    xferSweep();
+    var bucket = null;
+    try { bucket = JSON.parse(localStorage.getItem(XKEY + inc.sid)); } catch(e){}
+    if(!bucket || bucket.n !== inc.n) bucket = { n: inc.n, parts: {}, ts: Date.now() };
+    bucket.parts[inc.c] = inc.tracks;      // rescanning the same code is idempotent
+    bucket.ts = Date.now();
+    try { localStorage.setItem(XKEY + inc.sid, JSON.stringify(bucket)); } catch(e){}
+
+    var have = 0; for(var key in bucket.parts) if(bucket.parts.hasOwnProperty(key)) have++;
+    if(have < inc.n){
+      showReceiving(have, inc.n);
+      return true;
+    }
+
+    // Every part is in — stitch them in order and drop any duplicate url.
+    var seen = {}, list = [];
+    for(var p = 1; p <= inc.n; p++){
+      (bucket.parts[p] || []).forEach(function(t){ if(!seen[t.url]){ seen[t.url] = 1; list.push(t); } });
+    }
+    try { localStorage.removeItem(XKEY + inc.sid); } catch(e){}
+    start(list, 0, 0);
+    toast('Received all ' + inc.n + ' parts — ' + list.length + ' tracks');
+    return true;
   }
 
   /* ---------- persistence ---------- */
@@ -459,19 +545,17 @@ body{
   function start(list, startIdx, startPos){
     queue = list;
     $('empty').style.display = 'none';
+    $('recv').style.display = 'none';
     $('app').style.display = 'flex';
     renderQueue();
     var i = (typeof startIdx === 'number' && startIdx >= 0 && startIdx < list.length) ? startIdx : 0;
     play(i, startPos);
   }
 
-  var incoming = readHash();
-  if(incoming && incoming.length){
-    // A fresh handoff always wins over whatever was stored
-    history.replaceState(null, '', location.pathname + location.search);
-    start(incoming, 0, 0);
-    toast('Received ' + incoming.length + ' track' + (incoming.length > 1 ? 's' : ''));
-  } else {
+  xferSweep();
+  // A fresh handoff always wins over whatever was stored. handleIncoming returns
+  // false only when there is nothing to import, so fall back to the saved queue.
+  if(!handleIncoming(readHash())){
     var saved = load();
     if(saved && saved.queue && saved.queue.length){
       start(saved.queue, saved.idx, saved.pos);
@@ -481,14 +565,9 @@ body{
     }
   }
 
-  // A later scan while this page is already open
+  // A later scan while this page is still open (same tab, hash-only change).
   window.addEventListener('hashchange', function(){
-    var next = readHash();
-    if(next && next.length){
-      history.replaceState(null, '', location.pathname + location.search);
-      start(next, 0, 0);
-      toast('Received ' + next.length + ' track' + (next.length > 1 ? 's' : ''));
-    }
+    handleIncoming(readHash());
   });
 })();
 </script>

@@ -138,6 +138,12 @@ body{font-family:'DM Sans',-apple-system,BlinkMacSystemFont,sans-serif;backgroun
 .sheet-btn{margin-top:16px;height:32px;padding:0 16px;background:var(--s2);border:1px solid var(--sep);border-radius:8px;color:var(--t2);font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;transition:all .12s}
 .sheet-btn:hover{color:var(--t1);border-color:rgba(255,255,255,.14)}
 .sheet-warn{margin-top:12px;font-size:10px;color:#ff9f0a;text-align:center;max-width:250px;line-height:1.5}
+.sheet-nav{margin-top:16px;display:none;align-items:center;gap:14px}
+.sheet-nav.show{display:flex}
+.sheet-navbtn{height:34px;min-width:74px;padding:0 16px;background:var(--acc);border:none;border-radius:9px;color:#fff;font-size:12px;font-weight:700;font-family:inherit;cursor:pointer;transition:opacity .12s,transform .1s}
+.sheet-navbtn:active{transform:scale(.95)}
+.sheet-navbtn:disabled{opacity:.3;cursor:default}
+.sheet-navlbl{font-family:'SF Mono',Menlo,monospace;font-size:13px;font-weight:700;color:var(--t2);min-width:54px;text-align:center;letter-spacing:.06em}
 </style></head><body>
 
 <div class="head">
@@ -213,6 +219,11 @@ body{font-family:'DM Sans',-apple-system,BlinkMacSystemFont,sans-serif;backgroun
   <div class="sheet-sub" id="sheetsub">Scan with your phone camera</div>
   <div class="qr-frame" id="qrbox"></div>
   <div class="sheet-mode"><span class="sheet-dot" id="sheetdot"></span><span id="sheetmode">Ready</span></div>
+  <div class="sheet-nav" id="sheetnav">
+    <button class="sheet-navbtn" id="sheetprev" aria-label="Previous code">‹ Prev</button>
+    <span class="sheet-navlbl" id="sheetnavlbl">1 / 1</span>
+    <button class="sheet-navbtn" id="sheetnext" aria-label="Next code">Next ›</button>
+  </div>
   <button class="sheet-btn" id="sheetcopy">Copy link instead</button>
   <div class="sheet-warn" id="sheetwarn" style="display:none"></div>
 </div>
@@ -1055,53 +1066,106 @@ function encodeQueue(list){
   return b64url(JSON.stringify(payload));
 }
 
-function buildLink(list){return RECEIVER+'#q='+encodeQueue(list);}
+// A multi-part handoff tags each code with the transfer's session id, this
+// code's position, and the total. A single code (n=1) carries no header at all,
+// so it stays byte-for-byte the link the receiver has always understood.
+function buildLink(list,sid,c,n){
+  var url=RECEIVER+'#q='+encodeQueue(list);
+  if(n>1)url+='&s='+sid+'&c='+c+'&n='+n;
+  return url;
+}
+
+// Short id grouping the parts of one transfer, so the phone knows which codes
+// belong together and never mixes two handoffs.
+function xferSid(){return Math.random().toString(36).slice(2,6);}
+
+/* Split the queue into as few codes as fit, packing greedily: keep adding
+   tracks to the current code until one more would push it over the scannable
+   limit, then start a fresh one. Budget against QR_MAX minus a small reserve
+   for the "&s=..&c=..&n=.." header, which only a multi-part code carries — that
+   way a queue that fits one code is never needlessly split by phantom overhead.
+   A single track whose own URL already blows the limit (expiring tokened stream
+   links run ~1KB) can ride no QR at all; it is set aside for Copy link rather
+   than silently dropped, which is what the old trim loop did. */
+var HDR_RESERVE=20;
+function chunkQueue(all){
+  var cap=QR_MAX-HDR_RESERVE,chunks=[],oversize=[],cur=[];
+  for(var k=0;k<all.length;k++){
+    var t=all[k];
+    if(buildLink([t],null,1,1).length>cap){oversize.push(t);continue;}
+    var trial=cur.concat([t]);
+    if(cur.length&&buildLink(trial,null,1,1).length>cap){chunks.push(cur);cur=[t];}
+    else cur=trial;
+  }
+  if(cur.length)chunks.push(cur);
+  return {chunks:chunks,oversize:oversize};
+}
+
+var xfer=null;   // { chunks:[[track,...],...], i, sid }
+
+function renderXferFrame(){
+  if(!xfer)return;
+  var n=xfer.chunks.length,ch=xfer.chunks[xfer.i];
+  drawQR(buildLink(ch,xfer.sid,xfer.i+1,n));
+  if(n>1){
+    $('sheetnavlbl').textContent=(xfer.i+1)+' / '+n;
+    $('sheetprev').disabled=xfer.i===0;
+    $('sheetnext').disabled=xfer.i===n-1;
+    $('sheetmode').textContent='Code '+(xfer.i+1)+' of '+n+' — scan, then Next';
+  }else{
+    $('sheetmode').textContent=ch.length+' track'+(ch.length>1?'s':'')+' ready';
+  }
+}
 
 function openSheet(){
   if(!queue.length){qToast('Queue is empty');return;}
   $('sheet').classList.add('show');
   $('sheetwarn').style.display='none';
   // Widen the window so the QR renders large enough to scan
-  try{window.resizeTo(460,700);}catch(e){}
+  try{window.resizeTo(460,720);}catch(e){}
 
   // Hand off from whatever is playing now, so the phone picks up where you left off
   var from=idx>0?idx:0;
-  var list=queue.slice(from);
-  sheetLink=buildLink(list);
+  var full=queue.slice(from);
 
-  var link=sheetLink,trimmed=0,dropped=false;
-  while(link.length>QR_MAX&&list.length>1){list.pop();trimmed++;link=buildLink(list);}
-  if(link.length>QR_MAX){
-    // Titles are the expendable part — the URLs are what actually matter
-    list=list.map(function(t){return {title:'',url:t.url};});
-    link=buildLink(list);dropped=true;
-  }
+  // Copy link always carries the whole handoff in one link, whatever its size —
+  // the escape hatch when a queue is too large or too tokened to scan.
+  sheetLink=buildLink(full,null,1,1);
 
-  var ok=link.length<=QR_MAX&&drawQR(link);
-  var total=queue.length-from;
+  var split=chunkQueue(full),chunks=split.chunks,oversize=split.oversize;
 
-  if(!ok){
-    $('qrbox').innerHTML='<div style="padding:40px 28px;color:#666;font-size:12px;font-family:sans-serif;text-align:center;line-height:1.6">Queue is too large<br>for a scannable code</div>';
+  if(!chunks.length){
+    $('sheetnav').classList.remove('show');
+    $('qrbox').innerHTML='<div style="padding:40px 28px;color:#666;font-size:12px;font-family:sans-serif;text-align:center;line-height:1.6">These links are too large<br>for a scannable code</div>';
     $('sheetsub').textContent='Tap Copy link, send it to yourself, and open it on your phone.';
     $('sheetdot').className='sheet-dot wait';
     $('sheetmode').textContent='Use Copy link';
     return;
   }
 
-  $('sheetsub').textContent='Scan with your phone camera to open the queue';
-  $('sheetdot').className='sheet-dot';
-  $('sheetmode').textContent=(trimmed?list.length+' of '+total:total+' track'+(total>1?'s':''))+' ready';
-  if(trimmed>0){
-    $('sheetwarn').textContent=trimmed+' track'+(trimmed>1?'s':'')+' did not fit the code. Copy link sends all '+total+'.';
-    $('sheetwarn').style.display='block';
-  }else if(dropped){
-    $('sheetwarn').textContent='Titles omitted to fit. Copy link keeps them.';
+  xfer={chunks:chunks,i:0,sid:xferSid()};
+
+  if(chunks.length>1){
+    $('sheetnav').classList.add('show');
+    $('sheetsub').textContent='Scan each code in turn — your phone collects them until all '+chunks.length+' are in.';
+    $('sheetdot').className='sheet-dot wait';
+  }else{
+    $('sheetnav').classList.remove('show');
+    $('sheetsub').textContent='Scan with your phone camera to open the queue';
+    $('sheetdot').className='sheet-dot';
+  }
+  renderXferFrame();
+
+  if(oversize.length){
+    $('sheetwarn').textContent=oversize.length+' track'+(oversize.length>1?'s':'')+' too large to scan — Copy link sends '+(oversize.length>1?'them':'it')+' too.';
     $('sheetwarn').style.display='block';
   }
 }
 
 function closeSheet(){
   $('sheet').classList.remove('show');
+  $('sheetnav').classList.remove('show');
+  xfer=null;
   try{window.resizeTo(380,560);}catch(e){}
 }
 
@@ -1109,10 +1173,17 @@ $('qphone').onclick = openSheet;
 $('sheetx').onclick = closeSheet;
 $('sheet').addEventListener('click', e => { if (e.target === $('sheet')) closeSheet(); });
 $('sheetcopy').onclick = () => { if (sheetLink) navigator.clipboard.writeText(sheetLink).then(() => qToast('Link copied')); };
+$('sheetprev').onclick = () => { if (xfer && xfer.i > 0) { xfer.i--; renderXferFrame(); } };
+$('sheetnext').onclick = () => { if (xfer && xfer.i < xfer.chunks.length - 1) { xfer.i++; renderXferFrame(); } };
 
 document.addEventListener('keydown',e=>{
   if(e.target.tagName==='INPUT')return;
   if(e.code==='Escape'){closeSheet();return}
+  // While the send sheet is up, arrows page through the codes instead of seeking.
+  if($('sheet').classList.contains('show')&&xfer&&xfer.chunks.length>1){
+    if(e.code==='ArrowLeft'){e.preventDefault();$('sheetprev').onclick();return}
+    if(e.code==='ArrowRight'){e.preventDefault();$('sheetnext').onclick();return}
+  }
   if(e.code==='Space'){e.preventDefault();togglePlay()}
   if(e.code==='ArrowLeft'&&audio)audio.currentTime=Math.max(0,audio.currentTime-5);
   if(e.code==='ArrowRight'&&audio)audio.currentTime+=5;
