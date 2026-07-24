@@ -29,6 +29,12 @@ chrome.runtime.onMessage.addListener(msg => {
   if (msg && msg.type === 'afp-queue-changed') {
     window.postMessage({ __afp: 1, reply: true, type: 'ext-queue-changed', queue: msg.queue }, '*');
   }
+  // Whether a player window exists anywhere. Pages cache this to decide, without
+  // blocking, whether a click needs to open one — a stale answer is what makes a
+  // window flash open and immediately close again.
+  if (msg && msg.type === 'afp-player-state') {
+    window.postMessage({ __afp: 1, reply: true, type: 'ext-player-state', open: !!msg.open }, '*');
+  }
 });
 ```
 
@@ -52,6 +58,34 @@ async function afpBroadcast(queue) {
     chrome.tabs.sendMessage(t.id, { type: 'afp-queue-changed', queue }).catch(() => {});
   }
 }
+
+/* Tell every page whether a player window exists, whenever that changes.
+
+   Pages cannot see across tabs, so each one caches this answer and consults the
+   cache synchronously on click — a popup may only be opened while the click is
+   still user-activated, so there is no time to ask. Asking only at page load
+   left the cache stale: a player opened later, from another tab, stayed
+   invisible, and the next add opened a throwaway window that lost the singleton
+   election and closed itself. That is the window that flashes. */
+let afpStateTimer = null;
+async function afpPlayerState() {
+  const players = await chrome.tabs.query({ url: AFP_PLAYER_URL + '*' });
+  const open = players.length > 0;
+  const tabs = await chrome.tabs.query({});
+  for (const t of tabs) {
+    chrome.tabs.sendMessage(t.id, { type: 'afp-player-state', open }).catch(() => {});
+  }
+}
+// Tab events fire in bursts; collapse them so one settled answer goes out.
+function afpPlayerStateSoon() {
+  clearTimeout(afpStateTimer);
+  afpStateTimer = setTimeout(() => { afpPlayerState(); }, 150);
+}
+chrome.tabs.onCreated.addListener(afpPlayerStateSoon);
+chrome.tabs.onRemoved.addListener(afpPlayerStateSoon);
+chrome.tabs.onUpdated.addListener((id, info) => {
+  if (info.status === 'complete' || info.url) afpPlayerStateSoon();
+});
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || msg.type !== 'afp-queue') return;

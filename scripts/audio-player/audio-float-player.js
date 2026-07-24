@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Audio Float Player
-// @version      2.2.0
+// @version      2.3.0
 // @description  Elegant floating audio player. Detects audio, queues across pages, polished UI.
 // @match        *://*/*
 // @run-at       document-idle
@@ -68,7 +68,7 @@
      A whole round of debugging was lost to exactly that. If the console does
      not show this line with the current version, the extension is running a
      stale paste. */
-  const AFP_VERSION = '2.2.0';
+  const AFP_VERSION = '2.3.0';
   try {
     console.info('[AFP] audio-float-player v' + AFP_VERSION + ' — role: ' + ROLE
       + (IN_MAIN_WORLD ? ' (MAIN world)' : ' (isolated/user-script world)'));
@@ -510,6 +510,9 @@
   W.addEventListener('message', e => {
     const d = e.data;
     if (!d || typeof d !== 'object' || d.__afp !== 1 || !d.reply) return;
+    // Worker push: a player tab opened or closed anywhere. Unsolicited, so it
+    // carries no id — this is what keeps the cache below from going stale.
+    if (d.type === 'ext-player-state') { extAlive = true; playerOpen = !!d.open; return; }
     const w = extWaiting[d.id];
     if (w) { delete extWaiting[d.id]; w(d); }
   });
@@ -526,7 +529,20 @@
     });
   }
 
-  // Ask once at startup so the first click already knows whether to open a window.
+  /* ===== IS A PLAYER OPEN? =====
+     The answer has to be known BEFORE the click, not fetched during it: opening
+     a window is only allowed while the click still counts as user activation, so
+     the decision must be synchronous and therefore reads a cache.
+
+     A stale cache is precisely what makes a window flash open and vanish. Asking
+     only at startup meant a player opened later — from another tab, after this
+     page loaded — was invisible here, so the next add opened a throwaway window
+     that then lost the singleton election and closed itself.
+
+     Kept fresh three ways: the worker pushes changes (above), we re-ask whenever
+     this page comes back to the foreground, and we re-ask on the first hint of
+     intent — hovering the pill — so the answer is current by the time a track is
+     actually clicked. */
   function refreshPlayerOpen() {
     return extCall('ext-player-open').then(r => {
       if (r && r.ok) { extAlive = true; playerOpen = !!r.open; }
@@ -534,6 +550,11 @@
     });
   }
   refreshPlayerOpen();
+
+  W.addEventListener('focus', () => { refreshPlayerOpen(); });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshPlayerOpen();
+  });
 
   function popupFeatures() {
     const left = W.screenX + W.innerWidth - POPUP_W - 40, top = W.screenY + 60;
@@ -701,7 +722,11 @@
     if(pill)return;
     pill=document.createElement('div');pill.className='__afp-pill';
     pill.innerHTML=`<span class="__afp-pill-icon">${I.music}</span><span style="font-weight:500">Audio</span><span class="__afp-pill-count" id="__afp-c">0</span><span class="__afp-pill-arrow">${I.chev}</span>`;
-    pill.addEventListener('click',toggleList);document.body.appendChild(pill);
+    pill.addEventListener('click',toggleList);
+    // Earliest hint that a track is about to be sent — re-ask now so the
+    // synchronous decision on the click itself is working off a fresh answer.
+    pill.addEventListener('pointerenter',()=>{refreshPlayerOpen()});
+    document.body.appendChild(pill);
 
     listPanel=document.createElement('div');listPanel.className='__afp-list';
     listPanel.innerHTML=`<div class="__afp-list-hdr"><span>Sources</span><span style="display:flex;gap:6px"><button id="__afp-open">${I.ext} Player</button><button id="__afp-pa">${I.play} Add all</button></span></div><div class="__afp-list-scroll" id="__afp-sc"></div>`;
