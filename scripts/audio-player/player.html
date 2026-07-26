@@ -533,17 +533,25 @@ function addTrack(u,t,site){
 }
 function playIdx(i){
   if(i<0||i>=queue.length)return;idx=i;syncState();const t=queue[idx];
+  // Mark intent to play and reclaim in-flight probe connections BEFORE pausing
+  // the old element. `playing` is set synchronously here, not in play()'s
+  // promise, so there is no window during the switch where probes read the
+  // player as idle and start stealing bandwidth from the track about to begin.
+  playing=true;probeAborts.forEach(fn=>fn());
   if(audio){audio.pause();audio.src=''}
   $('nt').textContent=t.title;$('ns').textContent=t.url.length>50?t.url.substring(0,47)+'...':t.url;
   $('err').classList.remove('show');$('sf').style.width='0%';$('tc').textContent='0:00';$('td').textContent='--:--';
   audio=new Audio(t.url);audio.volume=.8;audio.playbackRate=speeds[si];playing=false;
   audio.addEventListener('loadedmetadata',()=>$('td').textContent=fmt(audio.duration));
   audio.addEventListener('timeupdate',()=>{$('tc').textContent=fmt(audio.currentTime);if(isFinite(audio.duration))$('sf').style.width=(audio.currentTime/audio.duration*100)+'%'});
+  // Playback stopped, so the connections it held are free — catch up on any
+  // duration probes that were held back while it ran.
+  audio.addEventListener('pause',()=>{if(!playing)pumpProbes()});
   audio.addEventListener('ended',()=>{playing=false;$('pp').innerHTML=playIcon;$('nart').classList.remove('spin');
     if(looping){playIdx(idx)}
     else if(shuffling){playIdx(Math.floor(Math.random()*queue.length))}
     else if(idx<queue.length-1){playIdx(idx+1)}
-    else renderQ()});
+    else {renderQ();pumpProbes()}});
   /* ===== SITE-LOCKED STREAMS =====
      Some hosts gate their media on a session cookie belonging to the site the
      track was grabbed from. That cookie is same-site there and third-party
@@ -574,14 +582,17 @@ function playIdx(i){
     // Flag the row too, so a dead link is visible in the queue and not just here
     if(queue[i]){queue[i].dead=true;queue[i].dur=null;renderQ()}
   }
-  audio.play().then(()=>{playing=true;$('pp').innerHTML=pauseIcon;$('nart').classList.add('spin')}).catch(()=>{});
+  // playing was set true synchronously above; the promise only settles the UI,
+  // and a rejected play (e.g. autoplay blocked) hands the bandwidth back so
+  // probing can resume.
+  audio.play().then(()=>{$('pp').innerHTML=pauseIcon;$('nart').classList.add('spin')}).catch(()=>{playing=false;pumpProbes()});
   renderQ();updateVol();
   if('mediaSession' in navigator)navigator.mediaSession.metadata=new MediaMetadata({title:t.title});
 }
 // Toggle only flips the equalizer animation on the active row — a full renderQ
 // here would broadcast state to every window on each play/pause.
 function refreshPlayingRow(){const r=document.querySelector('.qi.on');if(r)r.classList.toggle('paused',!playing)}
-function togglePlay(){if(!audio)return;if(playing){audio.pause();playing=false;$('pp').innerHTML=playIcon;$('nart').classList.remove('spin')}else{audio.play();playing=true;$('pp').innerHTML=pauseIcon;$('nart').classList.add('spin')}refreshPlayingRow()}
+function togglePlay(){if(!audio)return;if(playing){audio.pause();playing=false;$('pp').innerHTML=playIcon;$('nart').classList.remove('spin')}else{probeAborts.forEach(fn=>fn());audio.play();playing=true;$('pp').innerHTML=pauseIcon;$('nart').classList.add('spin')}refreshPlayingRow()}
 function removeTrack(i){if(i===idx){if(audio){audio.pause();audio.src=''}queue.splice(i,1);if(!queue.length){idx=-1;$('nt').textContent='No track loaded';$('ns').textContent='';$('pp').innerHTML=playIcon;$('nart').classList.remove('spin')}else{idx=Math.min(i,queue.length-1);playIdx(idx)}}else{const a=i>idx;queue.splice(i,1);if(!a)idx--}renderQ()}
 /* ===== QUEUE RENDERING ===== */
 
@@ -597,6 +608,9 @@ let filterText='';
    every track up front would fire one request per queue item on open. */
 const MAX_PROBES=3, PROBE_TIMEOUT=8000;
 let probesActive=0; const probeQueue=[];
+// Abort handles for probes currently in flight, so playback can reclaim their
+// connections the instant it starts rather than waiting for them to finish.
+const probeAborts=new Set();
 
 function pumpProbes(){
   // Never start a probe while the document is hidden. A hidden tab won't load
@@ -604,7 +618,16 @@ function pumpProbes(){
   // probes would occupy every concurrency slot indefinitely. This matters here
   // because the player is a popup that spends most of its life behind the main
   // window. Deferred work resumes on visibilitychange below.
-  if(document.hidden)return;
+  //
+  // Never probe while a track is playing either. Each probe opens its own
+  // connection to an audio host, and those compete with the playing stream for
+  // the per-host connection budget and for bandwidth. A host that serves at
+  // roughly playback rate — some do so deliberately — leaves the stream no
+  // margin, so the stolen bandwidth surfaces as a stutter. This is the lag that
+  // the same-origin per-site player never had, because it had no queue to probe.
+  // Probing resumes from the audio 'pause'/'ended' handlers and on
+  // visibilitychange; a row just shows an unknown duration until then.
+  if(document.hidden||playing)return;
   while(probesActive<MAX_PROBES&&probeQueue.length)runProbe(probeQueue.shift());
 }
 
@@ -625,13 +648,20 @@ function runProbe(url){
   const probe=new Audio();
   probe.preload='metadata';
   let done=false;
+  // Shared teardown: stop the timer, free the slot and the connection, and
+  // drop the abort handle. Runs once, whichever of finish/abort gets there first.
+  const settle=()=>{done=true;clearTimeout(timer);probesActive--;probeAborts.delete(abort);try{probe.src='';probe.load()}catch(_){}};
   const finish=(dur,dead)=>{
     if(done)return;                       // timeout and event can both fire
-    done=true;clearTimeout(timer);probesActive--;
+    settle();
     t.dur=dur; if(dead)t.dead=true;
-    try{probe.src='';probe.load()}catch(_){}   // release the connection
     renderQ();pumpProbes();
   };
+  // Playback starting reclaims the connection: release WITHOUT recording a
+  // result, and re-queue the url, so the row is measured later rather than left
+  // stuck at "–". dur stays undefined, which is what keeps it eligible to retry.
+  const abort=()=>{if(done)return;settle();if(!probeQueue.includes(url))probeQueue.push(url)};
+  probeAborts.add(abort);
   // Without this, a throttled or hanging host leaves the row loading forever and
   // leaks the request — neither loadedmetadata nor error ever fires. A slow host
   // is recorded as unknown duration, NOT as dead; only a real error means dead.
