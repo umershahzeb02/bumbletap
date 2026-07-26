@@ -117,7 +117,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: true, count, total: state.queue.length });
 
     } else if (msg.op === 'ext-authorize') {
-      const ok = await afpAuthorize(msg.payload.url, msg.payload.site);
+      const ok = await afpAuthorize(msg.payload.url, msg.payload.site, msg.payload.force);
       sendResponse({ ok: true, authorized: ok });
 
     } else if (msg.op === 'ext-queue-set') {
@@ -149,7 +149,7 @@ rule is scoped by target URL so nothing else on the web sees it.
 
 ```js
 const AFP_RULE_BASE = 9000;
-const afpAuthorized = new Map();          // media host -> dynamic rule id
+const AFP_MAP_KEY = 'afp_auth_map';       // { host: { id, ts } }, in session storage
 
 // Good enough for the hosts this handles. Not PSL-accurate, so a .co.uk style
 // domain matches more broadly than ideal — cookies still only ever travel to
@@ -159,10 +159,29 @@ const afpRegistrable = h => {
   return p.length > 2 ? p.slice(-2).join('.') : p.join('.');
 };
 
-async function afpAuthorize(mediaUrl, siteHint) {
+/* The host->rule-id map lives in chrome.storage.session, NOT an in-memory Map.
+   MV3 workers die after ~30s idle; DNR rules persist but a Map does not. With
+   the old Map, ids were `BASE + map.size`, so after a restart authorizing a
+   second host computed the SAME id an earlier host already held and
+   removeRuleIds deleted that host's surviving cookie rule — its tracks 403'd
+   again with no retry path ("played yesterday, dead today"). Session storage
+   dies with the browser, the same lifetime as the session cookies it tracks. */
+const afpAuthMap = async () => {
+  try { const r = await chrome.storage.session.get(AFP_MAP_KEY); return r[AFP_MAP_KEY] || {}; }
+  catch (_) { return {}; }
+};
+const afpAuthSave = m => { try { return chrome.storage.session.set({ [AFP_MAP_KEY]: m }); } catch (_) {} };
+
+async function afpAuthorize(mediaUrl, siteHint, force) {
   let host;
   try { host = new URL(mediaUrl).hostname; } catch (_) { return false; }
-  if (afpAuthorized.has(host)) return true;          // rule already installed
+
+  const map = await afpAuthMap();
+  const existing = map[host];
+  // Reuse a cached authorization, UNLESS the caller forces a refresh (the
+  // source cookie may have rotated) or it has aged past ten minutes. The old
+  // code returned early forever, so a rotated cookie could never be picked up.
+  if (existing && !force && Date.now() - existing.ts < 10 * 60 * 1000) return true;
 
   /* Two domains matter and they are usually different: the media host
      (stream.example.com) and the page the track was grabbed from
@@ -182,7 +201,10 @@ async function afpAuthorize(mediaUrl, siteHint) {
   const value = [...byName.values()].map(c => c.name + '=' + c.value).join('; ');
   if (!value) return false;
 
-  const id = AFP_RULE_BASE + afpAuthorized.size;
+  // Stable id per host: a refresh reuses the host's OWN id (replacing only its
+  // own rule), a new host takes one past the current max — never a neighbour's.
+  const id = existing ? existing.id
+    : AFP_RULE_BASE + 1 + Object.values(map).reduce((m, e) => Math.max(m, e.id - AFP_RULE_BASE), 0);
   try {
     await chrome.declarativeNetRequest.updateDynamicRules({
       removeRuleIds: [id],
@@ -200,8 +222,9 @@ async function afpAuthorize(mediaUrl, siteHint) {
     console.warn('[AFP] cookie rule rejected:', e && e.message);
     return false;
   }
-  afpAuthorized.set(host, id);
-  console.info('[AFP] authorized', host, 'with', byName.size, 'cookies');
+  map[host] = { id, ts: Date.now() };
+  await afpAuthSave(map);
+  console.info('[AFP] authorized', host, 'id', id, 'with', byName.size, 'cookies', force ? '(forced refresh)' : '');
   return true;
 }
 ```

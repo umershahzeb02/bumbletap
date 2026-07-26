@@ -254,6 +254,17 @@ try { window.name = '__afp_player'; } catch (_) {}
 
 const queue=[];let idx=-1,audio=null,playing=false,looping=false,shuffling=false;
 const speeds=[.5,.75,1,1.25,1.5,2];let si=2;
+let vol=.8,muted=false;
+// Playback preferences survive a track change AND a reload — volume, speed, loop
+// and shuffle used to reset to their defaults on every new track.
+(function loadPrefs(){try{const p=JSON.parse(localStorage.getItem('__afp_prefs')||'null');if(!p)return;
+  if(typeof p.vol==='number')vol=Math.max(0,Math.min(1,p.vol));
+  if(typeof p.muted==='boolean')muted=p.muted;
+  if(Number.isInteger(p.si)&&p.si>=0&&p.si<speeds.length)si=p.si;
+  if(typeof p.looping==='boolean')looping=p.looping;
+  if(typeof p.shuffling==='boolean')shuffling=p.shuffling;
+}catch(_){}})();
+function savePrefs(){try{localStorage.setItem('__afp_prefs',JSON.stringify({vol,muted,si,looping,shuffling}))}catch(_){}}
 const $=id=>document.getElementById(id);
 const fmt=s=>{if(!isFinite(s))return'--:--';const m=Math.floor(s/60),sc=Math.floor(s%60);return m+':'+(sc<10?'0':'')+sc};
 const playIcon='<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.14v14l11-7-11-7z"/></svg>';
@@ -361,7 +372,12 @@ const extWaiting = Object.create(null);
 window.addEventListener('message', e => {
   const d = e.data;
   if (!d || typeof d !== 'object' || d.__afp !== 1 || !d.reply) return;
-  if (d.type === 'ext-queue-changed') { applyQueue(d.queue); return; }
+  // A push from the worker is proof the relay is alive. Without this, a cold MV3
+  // worker that missed the one 700ms probe at load left extAlive stuck false, so
+  // this window wrote only to localStorage and its reorders/removes never reached
+  // chrome.storage — even though pushes were clearly arriving.
+  if (d.type === 'ext-player-state') { extAlive = true; }
+  if (d.type === 'ext-queue-changed') { extAlive = true; applyQueue(d.queue); return; }
   const w = extWaiting[d.id];
   if (w) { delete extWaiting[d.id]; w(d); }
 });
@@ -420,7 +436,9 @@ sync.onmessage=e=>{
   applyingRemote=true;
   try{
     queue.length=0;
-    d.queue.forEach(t=>{if(t&&typeof t.url==='string')queue.push({url:t.url,title:t.title||deriveTitle(t.url),site:t.site||null})});
+    // Carry dur across the sync — dropping it here made every cross-window state
+    // broadcast wipe measured durations, forcing every row to re-probe.
+    d.queue.forEach(t=>{if(t&&typeof t.url==='string')queue.push({url:t.url,title:t.title||deriveTitle(t.url),site:t.site||null,dur:t.dur})});
     idx=cur?queue.findIndex(t=>t.url===cur):-1;      // remap by URL, not position
     renderQ();
   }finally{applyingRemote=false}
@@ -550,7 +568,11 @@ function playIdx(i){
   stopAudio();
   $('nt').textContent=t.title;$('ns').textContent=t.url.length>50?t.url.substring(0,47)+'...':t.url;
   $('err').classList.remove('show');$('sf').style.width='0%';$('tc').textContent='0:00';$('td').textContent='--:--';
-  audio=new Audio(t.url);audio.volume=.8;audio.playbackRate=speeds[si];
+  // Native loop replays from the buffer, gaplessly. Re-invoking playIdx on
+  // 'ended' (the old loop path) tore the element down and re-streamed the whole
+  // file from byte 0 each pass — a multi-second silent gap, and on a throttled
+  // host a full re-download every loop.
+  audio=new Audio(t.url);audio.volume=vol;audio.muted=muted;audio.playbackRate=speeds[si];audio.loop=looping;
   // el is the stable capture; audioAC scopes every listener to THIS element so a
   // newer playIdx aborts them wholesale and no stale handler survives a switch.
   const el=audio, ac=audioAC=new AbortController(), sig={signal:ac.signal};
@@ -562,9 +584,10 @@ function playIdx(i){
   // Playback stopped, so the connections it held are free — catch up on any
   // duration probes that were held back while it ran.
   el.addEventListener('pause',()=>{if(!playing)pumpProbes()},sig);
+  // With audio.loop set, 'ended' never fires while looping — the element repeats
+  // itself. So this only runs when a track genuinely finishes.
   el.addEventListener('ended',()=>{playing=false;$('pp').innerHTML=playIcon;$('nart').classList.remove('spin');
-    if(looping){playIdx(idx)}
-    else if(shuffling){playIdx(Math.floor(Math.random()*queue.length))}
+    if(shuffling){playIdx(Math.floor(Math.random()*queue.length))}
     else if(idx<queue.length-1){playIdx(idx+1)}
     else {renderQ();pumpProbes()}},sig);
   /* ===== SITE-LOCKED STREAMS =====
@@ -580,10 +603,15 @@ function playIdx(i){
      code, only "it broke", so we cannot tell 403 from a genuinely dead link up
      front — attempting authorization and seeing whether it helps IS the test. */
   el.addEventListener('error',()=>{
-    if(!t.__authTried&&extAlive){
-      t.__authTried=true;
+    // Re-auth is allowed again after a minute, not just once ever: the source
+    // site's session cookie rotates, and a one-shot flag left a track that used
+    // to play permanently dead with no way to pick up the new cookie. force:true
+    // tells the worker to re-read cookies rather than reuse a stale capture.
+    const canAuth=extAlive&&Date.now()-(t.__authAt||0)>60000;
+    if(canAuth){
+      t.__authAt=Date.now();
       $('err').textContent='Authorizing with '+siteOf(t)+'…';$('err').classList.add('show');
-      extCall('ext-authorize',{url:t.url,site:t.site}).then(r=>{
+      extCall('ext-authorize',{url:t.url,site:t.site,force:true}).then(r=>{
         // Retry only if this track is still the current selection; key by URL so
         // a queue reorder mid-flight can't replay the wrong one.
         if(r&&r.ok&&r.authorized&&queue[idx]&&queue[idx].url===t.url){playIdx(idx);return}
@@ -591,8 +619,8 @@ function playIdx(i){
       });
       return;
     }
-    failTrack(t.__authTried?'Site-locked stream — '+siteOf(t)+' will not serve it here'
-                           :'Cannot load audio — check URL');
+    failTrack(t.__authAt?'Site-locked stream — '+siteOf(t)+' will not serve it here'
+                        :'Cannot load audio — check URL');
   },sig);
   function failTrack(msg){
     $('err').textContent=msg;$('err').classList.add('show');
@@ -829,11 +857,14 @@ $('pp').onclick=togglePlay;
 $('prev').onclick=()=>{if(idx>0)playIdx(idx-1)};
 $('next').onclick=()=>{if(idx<queue.length-1)playIdx(idx+1)};
 $('seek').onclick=e=>{if(!audio||!isFinite(audio.duration))return;audio.currentTime=(e.offsetX/$('seek').offsetWidth)*audio.duration};
-$('vb').onclick=e=>{if(!audio)return;audio.volume=Math.max(0,Math.min(1,e.offsetX/$('vb').offsetWidth));updateVol()};
-$('vi').onclick=()=>{if(!audio)return;audio.muted=!audio.muted;updateVol()};
-$('spd').onclick=()=>{if(!audio)return;si=(si+1)%speeds.length;audio.playbackRate=speeds[si];$('spd').textContent=speeds[si]+'×'};
-$('lp').onclick=()=>{looping=!looping;$('lp').classList.toggle('active',looping)};
-$('shuf').onclick=()=>{shuffling=!shuffling;$('shuf').classList.toggle('active',shuffling)};
+$('vb').onclick=e=>{if(!audio)return;vol=Math.max(0,Math.min(1,e.offsetX/$('vb').offsetWidth));muted=false;audio.volume=vol;audio.muted=false;updateVol();savePrefs()};
+$('vi').onclick=()=>{if(!audio)return;audio.muted=!audio.muted;muted=audio.muted;updateVol();savePrefs()};
+$('spd').onclick=()=>{si=(si+1)%speeds.length;if(audio)audio.playbackRate=speeds[si];$('spd').textContent=speeds[si]+'×';savePrefs()};
+$('lp').onclick=()=>{looping=!looping;if(audio)audio.loop=looping;$('lp').classList.toggle('active',looping);savePrefs()};
+$('shuf').onclick=()=>{shuffling=!shuffling;$('shuf').classList.toggle('active',shuffling);savePrefs()};
+// Reflect restored preferences in the controls at load, before any track plays.
+$('lp').classList.toggle('active',looping);$('shuf').classList.toggle('active',shuffling);$('spd').textContent=speeds[si]+'×';
+$('vf').style.width=(muted?0:vol*100)+'%';$('vl').textContent=Math.round((muted?0:vol)*100);
 $('qclr').onclick=()=>{stopAudio();playing=false;queue.length=0;idx=-1;$('nt').textContent='No track loaded';$('ns').textContent='';$('pp').innerHTML=playIcon;$('nart').classList.remove('spin');renderQ()};
 $('addbtn').onclick=()=>{const u=$('urlin').value.trim();if(!u)return;const n=decodeURIComponent(u.split('/').pop().split('?')[0]).slice(0,60)||'Custom URL';addTrack(u,n);$('urlin').value=''};
 $('urlin').addEventListener('keydown',e=>{if(e.key==='Enter')$('addbtn').click()});
@@ -1237,10 +1268,18 @@ document.addEventListener('keydown',e=>{
   if(e.code==='Space'){e.preventDefault();togglePlay()}
   if(e.code==='ArrowLeft'&&audio)audio.currentTime=Math.max(0,audio.currentTime-5);
   if(e.code==='ArrowRight'&&audio)audio.currentTime+=5;
-  if(e.code==='ArrowUp'){e.preventDefault();if(audio){audio.volume=Math.min(1,audio.volume+.05);updateVol()}}
-  if(e.code==='ArrowDown'){e.preventDefault();if(audio){audio.volume=Math.max(0,audio.volume-.05);updateVol()}}
+  if(e.code==='ArrowUp'){e.preventDefault();if(audio){audio.volume=Math.min(1,audio.volume+.05);vol=audio.volume;muted=audio.muted=false;updateVol();savePrefs()}}
+  if(e.code==='ArrowDown'){e.preventDefault();if(audio){audio.volume=Math.max(0,audio.volume-.05);vol=audio.volume;updateVol();savePrefs()}}
 });
-if('mediaSession' in navigator){navigator.mediaSession.setActionHandler('play',()=>{if(audio){audio.play();playing=true;$('pp').innerHTML=pauseIcon;$('nart').classList.add('spin')}});navigator.mediaSession.setActionHandler('pause',()=>{if(audio){audio.pause();playing=false;$('pp').innerHTML=playIcon;$('nart').classList.remove('spin')}});navigator.mediaSession.setActionHandler('previoustrack',()=>{if(idx>0)playIdx(idx-1)});navigator.mediaSession.setActionHandler('nexttrack',()=>{if(idx<queue.length-1)playIdx(idx+1)})}
+// Delegate the OS / headset media keys through togglePlay and the same nav paths
+// the buttons use, so they reclaim probe connections and keep `playing` in sync
+// instead of poking the element directly and desyncing state.
+if('mediaSession' in navigator){
+  navigator.mediaSession.setActionHandler('play',()=>{if(audio&&!playing)togglePlay()});
+  navigator.mediaSession.setActionHandler('pause',()=>{if(audio&&playing)togglePlay()});
+  navigator.mediaSession.setActionHandler('previoustrack',()=>{if(idx>0)playIdx(idx-1)});
+  navigator.mediaSession.setActionHandler('nexttrack',()=>{if(idx<queue.length-1)playIdx(idx+1)});
+}
 
 // Filtering is a view-only concern — redraw without broadcasting.
 $('qfilter').addEventListener('input',e=>{filterText=e.target.value;renderQ({noSync:true})});
