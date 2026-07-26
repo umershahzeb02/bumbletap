@@ -531,27 +531,42 @@ function addTrack(u,t,site){
   if(idx===-1)playIdx(0);
   return true;
 }
+let audioAC=null;   // aborts the outgoing element's listeners on every switch
+// Detach the current element's listeners and tear it down cleanly. Aborting the
+// listeners BEFORE clearing src is what stops the 'error' that an empty src
+// fires from running the outgoing track's handler — the bug that branded a track
+// dead and flashed the banner on every skip, remove and clear. removeAttribute +
+// load() is itself the teardown that fires no error at all.
+function stopAudio(){
+  if(audioAC){audioAC.abort();audioAC=null}
+  if(audio){try{audio.pause();audio.removeAttribute('src');audio.load()}catch(_){}}
+}
 function playIdx(i){
   if(i<0||i>=queue.length)return;idx=i;syncState();const t=queue[idx];
-  // Mark intent to play and reclaim in-flight probe connections BEFORE pausing
-  // the old element. `playing` is set synchronously here, not in play()'s
-  // promise, so there is no window during the switch where probes read the
-  // player as idle and start stealing bandwidth from the track about to begin.
+  // Intent to play, set synchronously (never in play()'s promise) so no probe
+  // ever reads the player as idle mid-switch, and reclaim any in-flight probe
+  // connections for the track about to start.
   playing=true;probeAborts.forEach(fn=>fn());
-  if(audio){audio.pause();audio.src=''}
+  stopAudio();
   $('nt').textContent=t.title;$('ns').textContent=t.url.length>50?t.url.substring(0,47)+'...':t.url;
   $('err').classList.remove('show');$('sf').style.width='0%';$('tc').textContent='0:00';$('td').textContent='--:--';
-  audio=new Audio(t.url);audio.volume=.8;audio.playbackRate=speeds[si];playing=false;
-  audio.addEventListener('loadedmetadata',()=>$('td').textContent=fmt(audio.duration));
-  audio.addEventListener('timeupdate',()=>{$('tc').textContent=fmt(audio.currentTime);if(isFinite(audio.duration))$('sf').style.width=(audio.currentTime/audio.duration*100)+'%'});
+  audio=new Audio(t.url);audio.volume=.8;audio.playbackRate=speeds[si];
+  // el is the stable capture; audioAC scopes every listener to THIS element so a
+  // newer playIdx aborts them wholesale and no stale handler survives a switch.
+  const el=audio, ac=audioAC=new AbortController(), sig={signal:ac.signal};
+  el.addEventListener('loadedmetadata',()=>{
+    $('td').textContent=fmt(el.duration);
+    if(t.dead){t.dead=false;renderQ()}      // it loaded, so it isn't dead — drop the badge
+  },sig);
+  el.addEventListener('timeupdate',()=>{$('tc').textContent=fmt(el.currentTime);if(isFinite(el.duration))$('sf').style.width=(el.currentTime/el.duration*100)+'%'},sig);
   // Playback stopped, so the connections it held are free — catch up on any
   // duration probes that were held back while it ran.
-  audio.addEventListener('pause',()=>{if(!playing)pumpProbes()});
-  audio.addEventListener('ended',()=>{playing=false;$('pp').innerHTML=playIcon;$('nart').classList.remove('spin');
+  el.addEventListener('pause',()=>{if(!playing)pumpProbes()},sig);
+  el.addEventListener('ended',()=>{playing=false;$('pp').innerHTML=playIcon;$('nart').classList.remove('spin');
     if(looping){playIdx(idx)}
     else if(shuffling){playIdx(Math.floor(Math.random()*queue.length))}
     else if(idx<queue.length-1){playIdx(idx+1)}
-    else {renderQ();pumpProbes()}});
+    else {renderQ();pumpProbes()}},sig);
   /* ===== SITE-LOCKED STREAMS =====
      Some hosts gate their media on a session cookie belonging to the site the
      track was grabbed from. That cookie is same-site there and third-party
@@ -564,28 +579,33 @@ function playIdx(i){
      authorize the host and try once more. A media element reports no status
      code, only "it broke", so we cannot tell 403 from a genuinely dead link up
      front — attempting authorization and seeing whether it helps IS the test. */
-  audio.addEventListener('error',()=>{
+  el.addEventListener('error',()=>{
     if(!t.__authTried&&extAlive){
       t.__authTried=true;
       $('err').textContent='Authorizing with '+siteOf(t)+'…';$('err').classList.add('show');
       extCall('ext-authorize',{url:t.url,site:t.site}).then(r=>{
-        if(r&&r.ok&&r.authorized&&idx===i){playIdx(i);return}   // still on this track
+        // Retry only if this track is still the current selection; key by URL so
+        // a queue reorder mid-flight can't replay the wrong one.
+        if(r&&r.ok&&r.authorized&&queue[idx]&&queue[idx].url===t.url){playIdx(idx);return}
         failTrack(r&&r.ok?'Site-locked stream — no cookie for '+siteOf(t):'Cannot load audio — check URL');
       });
       return;
     }
     failTrack(t.__authTried?'Site-locked stream — '+siteOf(t)+' will not serve it here'
                            :'Cannot load audio — check URL');
-  });
+  },sig);
   function failTrack(msg){
     $('err').textContent=msg;$('err').classList.add('show');
-    // Flag the row too, so a dead link is visible in the queue and not just here
-    if(queue[i]){queue[i].dead=true;queue[i].dur=null;renderQ()}
+    // Flag the row too — but find it by URL, so a reorder between play and the
+    // async error can never brand a bystander that slid into the old index.
+    const row=queue.find(x=>x.url===t.url);
+    if(row){row.dead=true;row.dur=null;renderQ()}
   }
-  // playing was set true synchronously above; the promise only settles the UI,
-  // and a rejected play (e.g. autoplay blocked) hands the bandwidth back so
-  // probing can resume.
-  audio.play().then(()=>{$('pp').innerHTML=pauseIcon;$('nart').classList.add('spin')}).catch(()=>{playing=false;pumpProbes()});
+  // playing was set true above; the promise only settles the UI. The el guard
+  // drops a stale settle from an element a newer playIdx already replaced, which
+  // would otherwise reset `playing` or pump probes over the live track.
+  el.play().then(()=>{if(el===audio){$('pp').innerHTML=pauseIcon;$('nart').classList.add('spin')}})
+           .catch(()=>{if(el===audio){playing=false;pumpProbes()}});
   renderQ();updateVol();
   if('mediaSession' in navigator)navigator.mediaSession.metadata=new MediaMetadata({title:t.title});
 }
@@ -593,7 +613,7 @@ function playIdx(i){
 // here would broadcast state to every window on each play/pause.
 function refreshPlayingRow(){const r=document.querySelector('.qi.on');if(r)r.classList.toggle('paused',!playing)}
 function togglePlay(){if(!audio)return;if(playing){audio.pause();playing=false;$('pp').innerHTML=playIcon;$('nart').classList.remove('spin')}else{probeAborts.forEach(fn=>fn());audio.play();playing=true;$('pp').innerHTML=pauseIcon;$('nart').classList.add('spin')}refreshPlayingRow()}
-function removeTrack(i){if(i===idx){if(audio){audio.pause();audio.src=''}queue.splice(i,1);if(!queue.length){idx=-1;$('nt').textContent='No track loaded';$('ns').textContent='';$('pp').innerHTML=playIcon;$('nart').classList.remove('spin')}else{idx=Math.min(i,queue.length-1);playIdx(idx)}}else{const a=i>idx;queue.splice(i,1);if(!a)idx--}renderQ()}
+function removeTrack(i){if(i===idx){stopAudio();queue.splice(i,1);if(!queue.length){idx=-1;playing=false;$('nt').textContent='No track loaded';$('ns').textContent='';$('pp').innerHTML=playIcon;$('nart').classList.remove('spin');pumpProbes()}else{idx=Math.min(i,queue.length-1);playIdx(idx)}}else{const a=i>idx;queue.splice(i,1);if(!a)idx--}renderQ()}
 /* ===== QUEUE RENDERING ===== */
 
 const ICO={
@@ -814,7 +834,7 @@ $('vi').onclick=()=>{if(!audio)return;audio.muted=!audio.muted;updateVol()};
 $('spd').onclick=()=>{if(!audio)return;si=(si+1)%speeds.length;audio.playbackRate=speeds[si];$('spd').textContent=speeds[si]+'×'};
 $('lp').onclick=()=>{looping=!looping;$('lp').classList.toggle('active',looping)};
 $('shuf').onclick=()=>{shuffling=!shuffling;$('shuf').classList.toggle('active',shuffling)};
-$('qclr').onclick=()=>{if(audio){audio.pause();audio.src=''}queue.length=0;idx=-1;$('nt').textContent='No track loaded';$('ns').textContent='';$('pp').innerHTML=playIcon;$('nart').classList.remove('spin');renderQ()};
+$('qclr').onclick=()=>{stopAudio();playing=false;queue.length=0;idx=-1;$('nt').textContent='No track loaded';$('ns').textContent='';$('pp').innerHTML=playIcon;$('nart').classList.remove('spin');renderQ()};
 $('addbtn').onclick=()=>{const u=$('urlin').value.trim();if(!u)return;const n=decodeURIComponent(u.split('/').pop().split('?')[0]).slice(0,60)||'Custom URL';addTrack(u,n);$('urlin').value=''};
 $('urlin').addEventListener('keydown',e=>{if(e.key==='Enter')$('addbtn').click()});
 
