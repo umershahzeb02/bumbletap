@@ -5,7 +5,15 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#000000">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Audio">
+<!-- Installing to the home screen is what most reliably earns durable storage:
+     an installed origin is exempt from the routine eviction that otherwise wipes
+     the saved queue after a week of not opening it. It also drops the browser
+     chrome, which buys back ~110px of vertical space on a phone. -->
+<link rel="manifest" href="mobile-manifest.json">
+<link rel="apple-touch-icon" href="mobile-icon.svg">
 <title>Audio Player</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -16,7 +24,11 @@
   --bg:#000;--s1:#1c1c1e;--s2:#2c2c2e;--sep:rgba(255,255,255,.07);
   --t1:rgba(255,255,255,.92);--t2:rgba(255,255,255,.5);--t3:rgba(255,255,255,.22);
   --acc:#0a84ff;--acc2:#5ac8fa;
-  --pad:max(18px,env(safe-area-inset-left));
+  /* env() needs a fallback. Without one, a browser that does not resolve
+     safe-area insets turns this into max(18px,) — invalid at computed-value
+     time — which silently drops every padding that uses --pad and collapses the
+     side gutters. */
+  --pad:max(18px,env(safe-area-inset-left,0px));
 }
 html,body{height:100%;overflow:hidden}
 body{
@@ -28,6 +40,23 @@ body{
   padding-top:env(safe-area-inset-top);
   padding-bottom:env(safe-area-inset-bottom);
 }
+
+/* Flex items default to min-width:auto, so they refuse to shrink below their
+   content. The now-playing subtitle is a nowrap URL and the error line is a long
+   sentence, and between them they pushed the whole column wider than the phone —
+   which is why the artwork, title, seek bar and controls all sat shifted right
+   with their right-hand side clipped off.
+
+   min-width:0 alone was not enough, because intrinsic sizing still propagated up
+   the chain. Pinning each level to the viewport width explicitly is what stops
+   it: nothing in the column can now exceed the screen, so ellipsis and wrapping
+   engage instead of the layout growing. */
+html,body{width:100%;max-width:100%;overflow-x:hidden}
+#app{width:100%;max-width:100vw;min-width:0}
+.stage,.meta,.seek-wrap,.ctrls,.head,.qbar,.q{width:100%;max-width:100%;min-width:0}
+/* The URL line truncates; the error message wraps rather than running off. */
+.sub{max-width:100%}
+.err{overflow-wrap:anywhere}
 
 /* ---------- header ---------- */
 .head{
@@ -345,14 +374,49 @@ body{
     return true;
   }
 
-  /* ---------- persistence ---------- */
+  /* ---------- persistence ----------
+     The queue was already being written on every track change and on
+     pagehide/visibilitychange, so "it forgot my queue" was never a missing
+     save. It is the browser DELETING the save.
+
+     Mobile browsers evict script-writable storage on their own schedule. Safari
+     is the strict one: storage for a site you have not interacted with as
+     first-party is wiped after 7 days, which is exactly the "worked, then later
+     asked for the QR again" pattern. Chrome/Android evicts under storage
+     pressure. Nothing about how often we call setItem changes that.
+
+     What does change it is asking for persistent storage. A granted origin is
+     exempt from routine eviction, which is the actual fix. It is a request, not
+     a guarantee — browsers weigh engagement, and installing to the home screen
+     is what most reliably tips it. */
+  (function requestDurableStorage(){
+    try {
+      if(navigator.storage && navigator.storage.persist){
+        navigator.storage.persisted().then(function(already){
+          if(!already) return navigator.storage.persist();
+        }).catch(function(){});
+      }
+    } catch(e){}
+  })();
+
   function save(){
     try {
       localStorage.setItem(STORE, JSON.stringify({
         queue: queue, idx: idx,
-        pos: audio && isFinite(audio.currentTime) ? audio.currentTime : 0
+        pos: audio && isFinite(audio.currentTime) ? audio.currentTime : 0,
+        ts: Date.now()
       }));
     } catch(e){}
+  }
+  // Position moves constantly; writing it on every timeupdate would hit
+  // localStorage several times a second. Throttled so resume is accurate to a
+  // few seconds without hammering synchronous storage on the main thread.
+  var lastSave = 0;
+  function saveSoon(){
+    var now = Date.now();
+    if(now - lastSave < 5000) return;
+    lastSave = now;
+    save();
   }
   function load(){
     try {
@@ -420,6 +484,10 @@ body{
       $('tc').textContent = fmt(audio.currentTime);
       if(isFinite(audio.duration) && audio.duration > 0)
         $('sf').style.width = (audio.currentTime / audio.duration * 100) + '%';
+      // Keep the resume point fresh. Previously position was only written on a
+      // track change or when the page was hidden, so a tab the OS discarded
+      // mid-track resumed from wherever the last save happened to land.
+      saveSoon();
     });
     audio.addEventListener('ended', function(){
       setPlayingUI(false);

@@ -1,0 +1,19 @@
+{
+  "name": "Audio Player",
+  "short_name": "Audio",
+  "description": "The queue sent from your computer, playable on your phone.",
+  "start_url": "./mobile-player.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "icons": [
+    {
+      "src": "mobile-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
