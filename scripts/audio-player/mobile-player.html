@@ -246,6 +246,8 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
     <div><b>2.</b> Tap <b>Send to Phone</b> under the queue</div>
     <div><b>3.</b> Scan the QR code with this phone</div>
   </div>
+  <div id="diag" style="display:none;font-size:10px;color:rgba(255,255,255,.28);
+    font-family:ui-monospace,Menlo,monospace;line-height:1.6;max-width:300px;word-break:break-word"></div>
 </div>
 
 <div class="empty" id="recv" style="display:none">
@@ -359,10 +361,11 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
     // Strip the payload so a reload or accidental share-back never re-imports it.
     history.replaceState(null, '', location.pathname + location.search);
 
-    // A lone code: play immediately, exactly as handoffs always have.
+    // A lone code: merge it in and start playing if nothing was.
     if(inc.n <= 1 || !inc.sid){
-      start(inc.tracks, 0, 0);
-      toast('Received ' + inc.tracks.length + ' track' + (inc.tracks.length > 1 ? 's' : ''));
+      var n1 = receive(inc.tracks);
+      toast(n1 ? ('Added ' + n1 + ' track' + (n1 > 1 ? 's' : ''))
+               : 'Already in your queue');
       return true;
     }
 
@@ -387,8 +390,8 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
       (bucket.parts[p] || []).forEach(function(t){ if(!seen[t.url]){ seen[t.url] = 1; list.push(t); } });
     }
     try { localStorage.removeItem(XKEY + inc.sid); } catch(e){}
-    start(list, 0, 0);
-    toast('Received all ' + inc.n + ' parts — ' + list.length + ' tracks');
+    var nAll = receive(list);
+    toast('Received all ' + inc.n + ' parts — added ' + nAll);
     return true;
   }
 
@@ -417,6 +420,10 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
     } catch(e){}
   })();
 
+  // Why saving failed, if it did. This used to be swallowed silently, which is
+  // exactly why "it forgets my queue" was undiagnosable — the page could be
+  // failing every single write and still look completely normal.
+  var saveErr = null, saveOk = 0;
   function save(){
     try {
       localStorage.setItem(STORE, JSON.stringify({
@@ -424,7 +431,25 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
         pos: audio && isFinite(audio.currentTime) ? audio.currentTime : 0,
         ts: Date.now()
       }));
-    } catch(e){}
+      saveErr = null; saveOk = Date.now();
+    } catch(e){
+      saveErr = (e && (e.name || e.message)) || 'unknown';
+    }
+  }
+
+  /* Does this browser actually give us durable storage? Private windows and
+     some in-app webviews expose localStorage but throw on write or wipe it when
+     the view closes, and both look identical to "the queue vanished". */
+  function storageProbe(){
+    try {
+      var k = '__afp_probe';
+      localStorage.setItem(k, '1');
+      var ok = localStorage.getItem(k) === '1';
+      localStorage.removeItem(k);
+      return ok ? 'ok' : 'readback failed';
+    } catch(e){
+      return 'blocked (' + ((e && e.name) || 'error') + ')';
+    }
   }
   // Position moves constantly; writing it on every timeupdate would hit
   // localStorage several times a second. Throttled so resume is accurate to a
@@ -757,6 +782,35 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
   };
 
   /* ---------- boot ---------- */
+  /* Merge an incoming handoff into whatever is already on the phone.
+
+     start() replaces the queue outright, which is right when restoring a saved
+     session but wrong for a scan: sending "a few more" from the PC silently
+     threw away everything already here. Receiving now appends, dedupes by url,
+     and leaves the currently-playing track alone. */
+  function receive(list){
+    var added = 0;
+    list.forEach(function(t){
+      if(!t || typeof t.url !== 'string' || !/^https?:\/\//i.test(t.url)) return;
+      if(queue.some(function(x){ return x.url === t.url; })) return;
+      queue.push({
+        title: t.title || (function(){
+          try { return decodeURIComponent(t.url.split('/').pop().split('?')[0]).slice(0,70) || 'Untitled'; }
+          catch(e){ return 'Untitled'; }
+        })(),
+        url: t.url
+      });
+      added++;
+    });
+    $('empty').style.display = 'none';
+    $('recv').style.display  = 'none';
+    $('app').style.display   = 'flex';
+    renderQueue();
+    save();
+    if(idx < 0 && queue.length) play(0);   // nothing was playing, so begin
+    return added;
+  }
+
   function start(list, startIdx, startPos){
     queue = list;
     $('empty').style.display = 'none';
@@ -768,15 +822,36 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
   }
 
   xferSweep();
-  // A fresh handoff always wins over whatever was stored. handleIncoming returns
-  // false only when there is nothing to import, so fall back to the saved queue.
-  if(!handleIncoming(readHash())){
-    var saved = load();
-    if(saved && saved.queue && saved.queue.length){
-      start(saved.queue, saved.idx, saved.pos);
-    } else {
-      $('empty').style.display = 'flex';
-      $('app').style.display = 'none';
+
+  /* Restore FIRST, then apply any incoming code on top.
+
+     The old order handed the hash to handleIncoming and only fell back to the
+     saved queue if there was nothing to import. Two ways that lost your queue:
+     a scan replaced it outright, and an incomplete multi-part transfer returned
+     true while showing "Receiving…", so the saved queue was never loaded and the
+     player stayed hidden behind that panel with no way back to it. Loading the
+     saved queue up front means an incoming code now merges into it. */
+  var saved = load();
+  var restored = false;
+  if(saved && saved.queue && saved.queue.length){
+    start(saved.queue, saved.idx, saved.pos);
+    restored = true;
+  }
+  var got = handleIncoming(readHash());
+  if(!restored && !got){
+    $('empty').style.display = 'flex';
+    $('app').style.display = 'none';
+    // Land on the empty screen with the reason visible, rather than making the
+    // user guess whether the queue was lost or never saved in the first place.
+    var probe = storageProbe();
+    var stored = 0;
+    try { var raw = localStorage.getItem(STORE); stored = raw ? (JSON.parse(raw).queue || []).length : 0; } catch(e){}
+    var d = $('diag');
+    if(d){
+      d.textContent = 'storage: ' + probe
+        + ' · saved queue: ' + stored + ' tracks'
+        + (saveErr ? ' · last write failed: ' + saveErr : '');
+      d.style.display = 'block';
     }
   }
 
