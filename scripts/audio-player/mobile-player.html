@@ -151,6 +151,11 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
 .empty .steps{text-align:left;font-size:12px;color:var(--t2);line-height:2;background:var(--s1);
   border:1px solid var(--sep);border-radius:12px;padding:14px 18px}
 .empty .steps b{color:var(--acc2);font-weight:700}
+.empty-acts{display:flex;flex-direction:column;gap:9px;width:100%;max-width:290px}
+.ea{height:46px;border-radius:12px;border:1px solid var(--sep);background:var(--s1);
+  color:var(--t1);font-family:inherit;font-size:14px;font-weight:600;cursor:pointer;
+  transition:background .15s,transform .12s}
+.ea:active{transform:scale(.97);background:var(--s2)}
 .recv-bar{width:210px;max-width:72vw;height:7px;border-radius:4px;background:rgba(255,255,255,.1);overflow:hidden}
 .recv-fill{height:100%;background:var(--acc);width:0;transition:width .3s ease}
 .recv-count{font-family:'SF Mono',Menlo,monospace;font-size:13px;font-weight:700;color:var(--acc2);letter-spacing:.08em}
@@ -192,7 +197,6 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
     <button class="head-b" id="himp" aria-label="Import queue" title="Import queue">
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
     </button>
-    <input type="file" class="file-hidden" id="hfile" accept=".json,.m3u,.m3u8,.txt,application/json,text/plain">
   </div>
 
   <div class="stage">
@@ -246,9 +250,22 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
     <div><b>2.</b> Tap <b>Send to Phone</b> under the queue</div>
     <div><b>3.</b> Scan the QR code with this phone</div>
   </div>
+
+  <!-- Recovery lives HERE, not only in the header. The header sits inside #app,
+       which is display:none whenever the queue is empty, so the import button
+       was hidden at precisely the moment it was needed. -->
+  <div class="empty-acts">
+    <button class="ea" id="eimp">Import a file</button>
+    <button class="ea" id="elink">Paste a queue link</button>
+  </div>
+
   <div id="diag" style="display:none;font-size:10px;color:rgba(255,255,255,.28);
     font-family:ui-monospace,Menlo,monospace;line-height:1.6;max-width:300px;word-break:break-word"></div>
 </div>
+
+<!-- Kept at body level: a file input inside a display:none ancestor cannot be
+     reliably opened with .click() in every browser. -->
+<input type="file" class="file-hidden" id="hfile" accept=".json,.m3u,.m3u8,.txt,application/json,text/plain">
 
 <div class="empty" id="recv" style="display:none">
   <h2 id="recvh">Receiving…</h2>
@@ -772,9 +789,45 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
   window.addEventListener('pagehide', save);
   document.addEventListener('visibilitychange', function(){ if(document.hidden) save(); });
 
+  function pickFile(){ $('hfile').click(); }
+
+  /* Restore from a link that was copied earlier. The whole queue rides in the
+     hash, so this works even when site storage has been wiped — which is the
+     situation the empty screen exists for. */
+  function importLink(str){
+    if(!str) return;
+    var m = String(str).match(/[#&]q=([A-Za-z0-9\-_]+)/);
+    if(!m){ toast('That does not look like a queue link'); return; }
+    var parsed = null;
+    try {
+      var obj = JSON.parse(unb64url(m[1]));
+      var base = obj.b || '';
+      parsed = (obj.t || []).map(function(p){ return { title: p[0] || null, url: base + p[1] }; });
+    } catch(e){ parsed = null; }
+    if(!parsed || !parsed.length){ toast('Could not read that link'); return; }
+    var n = receive(parsed);
+    toast(n ? ('Added ' + n + ' track' + (n > 1 ? 's' : '')) : 'Already in your queue');
+  }
+
+  function pasteLink(){
+    // Clipboard read needs permission and can be refused; prompt always works.
+    if(navigator.clipboard && navigator.clipboard.readText){
+      navigator.clipboard.readText()
+        .then(function(txt){
+          if(txt && /[#&]q=/.test(txt)) importLink(txt);
+          else importLink(window.prompt('Paste the queue link') || '');
+        })
+        .catch(function(){ importLink(window.prompt('Paste the queue link') || ''); });
+    } else {
+      importLink(window.prompt('Paste the queue link') || '');
+    }
+  }
+
   $('hshare').onclick = shareLink;
   $('hexp').onclick   = exportQueue;
-  $('himp').onclick   = function(){ $('hfile').click(); };
+  $('himp').onclick   = pickFile;
+  $('eimp').onclick   = pickFile;      // same action, reachable from the empty screen
+  $('elink').onclick  = pasteLink;
   $('hfile').onchange = function(e){
     var f = e.target.files && e.target.files[0];
     if(f) importFile(f);
