@@ -63,8 +63,16 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
   display:flex;align-items:center;gap:9px;
   padding:14px var(--pad) 10px;flex-shrink:0;
 }
-.head-t{font-size:14px;font-weight:600;color:var(--t2);flex:1;letter-spacing:-.01em}
-.head-c{font-size:11px;font-weight:700;color:var(--acc2);background:rgba(10,132,255,.12);padding:3px 10px;border-radius:11px}
+.head-t{font-size:14px;font-weight:600;color:var(--t2);flex:1;letter-spacing:-.01em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.head-c{font-size:11px;font-weight:700;color:var(--acc2);background:rgba(10,132,255,.12);padding:3px 10px;border-radius:11px;flex-shrink:0}
+/* Header actions. 34px hit targets — below ~32 they get genuinely hard to hit
+   with a thumb, which is the usual reason icon buttons feel bad on a phone. */
+.head-b{width:34px;height:34px;border-radius:9px;border:none;background:transparent;
+  color:var(--t2);display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;cursor:pointer;transition:background .15s,transform .12s,color .15s}
+.head-b:active{transform:scale(.88);background:var(--s2);color:var(--t1)}
+.file-hidden{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 
 /* ---------- now playing ---------- */
 .stage{flex:1;display:flex;flex-direction:column;justify-content:center;padding:0 var(--pad);min-height:0}
@@ -175,6 +183,16 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.28)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
     <span class="head-t">Audio Player</span>
     <span class="head-c" id="hc">0</span>
+    <button class="head-b" id="hshare" aria-label="Copy queue link" title="Copy queue link">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>
+    </button>
+    <button class="head-b" id="hexp" aria-label="Export queue" title="Export queue">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+    </button>
+    <button class="head-b" id="himp" aria-label="Import queue" title="Import queue">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+    </button>
+    <input type="file" class="file-hidden" id="hfile" accept=".json,.m3u,.m3u8,.txt,application/json,text/plain">
   </div>
 
   <div class="stage">
@@ -426,6 +444,126 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
     } catch(e){ return null; }
   }
 
+  /* ---------- export / import / link ----------
+     Formats match the desktop player exactly, so a queue exported on either side
+     imports on the other. The link is the useful one on a phone: it carries the
+     whole queue in its hash, so pasting it into notes gives you a restore path
+     that survives the browser clearing site storage. */
+
+  function b64url(s){
+    return btoa(unescape(encodeURIComponent(s)))
+      .replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  }
+  // Fold the shared URL prefix out — tracks from one host overlap heavily, and
+  // the hash gets long fast otherwise. Mirrors encodeQueue() on the desktop.
+  function encodeQueue(list){
+    var urls = list.map(function(t){ return t.url; });
+    var pre = urls.length ? urls[0] : '';
+    for(var i = 1; i < urls.length; i++){
+      var j = 0;
+      while(j < pre.length && j < urls[i].length && pre.charAt(j) === urls[i].charAt(j)) j++;
+      pre = pre.slice(0, j);
+      if(!pre) break;
+    }
+    return b64url(JSON.stringify({
+      b: pre,
+      t: list.map(function(t){ return [t.title || '', t.url.slice(pre.length)]; })
+    }));
+  }
+  function queueLink(){
+    return location.origin + location.pathname + '#q=' + encodeQueue(queue);
+  }
+
+  function download(name, content, type){
+    var blob = new Blob([content], { type: type });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); }, 10000);
+  }
+
+  function exportQueue(){
+    if(!queue.length){ toast('Queue is empty'); return; }
+    download('audio-queue-' + Date.now() + '.json',
+      JSON.stringify({ exported: new Date().toISOString(),
+        tracks: queue.map(function(t){ return { title: t.title, url: t.url }; }) }, null, 2),
+      'application/json');
+    toast('Exported ' + queue.length + ' tracks');
+  }
+
+  function shareLink(){
+    if(!queue.length){ toast('Queue is empty'); return; }
+    var url = queueLink();
+    // The share sheet is the natural phone gesture — it lets you drop the link
+    // straight into Notes or send it to yourself. Clipboard is the fallback.
+    if(navigator.share){
+      navigator.share({ title: 'Audio queue', url: url })
+        .catch(function(){ copyLink(url); });
+    } else {
+      copyLink(url);
+    }
+  }
+  function copyLink(url){
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(url)
+        .then(function(){ toast('Link copied — save it to restore this queue'); })
+        .catch(function(){ toast('Could not copy link'); });
+    } else {
+      toast('Copying is not available here');
+    }
+  }
+
+  // Adds without disturbing what is currently playing, and dedupes by url.
+  function importTracks(list){
+    var added = 0;
+    list.forEach(function(t){
+      if(!t || typeof t.url !== 'string' || !/^https?:\/\//i.test(t.url)) return;
+      if(queue.some(function(x){ return x.url === t.url; })) return;
+      queue.push({ title: t.title || t.url.split('/').pop().split('?')[0] || 'Untitled', url: t.url });
+      added++;
+    });
+    if(!added) return 0;
+    $('empty').style.display = 'none';
+    $('recv').style.display  = 'none';
+    $('app').style.display   = 'flex';
+    renderQueue();
+    save();
+    if(idx < 0) play(0);           // nothing was loaded, so start the first one
+    return added;
+  }
+
+  function importFile(file){
+    var reader = new FileReader();
+    reader.onload = function(ev){
+      var text = String(ev.target.result || ''), n = 0;
+      // JSON first: either our export shape, or a bare array of tracks.
+      try {
+        var json = JSON.parse(text);
+        var arr = Array.isArray(json) ? json : (json && json.tracks);
+        if(Array.isArray(arr)) n = importTracks(arr);
+        if(n){ toast('Imported ' + n + ' tracks'); return; }
+      } catch(e){}
+      // M3U keeps the title on the #EXTINF line above its url.
+      if(/#EXTM3U|#EXTINF/.test(text) || /\.m3u8?$/i.test(file.name)){
+        var out = [], title = null;
+        text.split(/\r?\n/).forEach(function(line){
+          line = line.trim();
+          if(!line) return;
+          if(/^#EXTINF/i.test(line)){ title = line.split(',').slice(1).join(',').trim() || null; return; }
+          if(line.charAt(0) === '#') return;
+          out.push({ title: title, url: line }); title = null;
+        });
+        n = importTracks(out);
+        if(n){ toast('Imported ' + n + ' tracks'); return; }
+      }
+      // Otherwise treat it as a plain list of urls, one per line.
+      n = importTracks(text.split(/\r?\n/).map(function(l){ return { url: l.trim() }; }));
+      toast(n ? ('Imported ' + n + ' tracks') : 'Nothing importable in that file');
+    };
+    reader.readAsText(file);
+  }
+
   /* ---------- rendering ---------- */
   function renderQueue(){
     var q = $('q');
@@ -608,6 +746,15 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
 
   window.addEventListener('pagehide', save);
   document.addEventListener('visibilitychange', function(){ if(document.hidden) save(); });
+
+  $('hshare').onclick = shareLink;
+  $('hexp').onclick   = exportQueue;
+  $('himp').onclick   = function(){ $('hfile').click(); };
+  $('hfile').onchange = function(e){
+    var f = e.target.files && e.target.files[0];
+    if(f) importFile(f);
+    e.target.value = '';        // let the same file be picked again
+  };
 
   /* ---------- boot ---------- */
   function start(list, startIdx, startPos){
