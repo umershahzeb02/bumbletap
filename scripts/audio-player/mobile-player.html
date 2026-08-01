@@ -516,6 +516,31 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
     return location.origin + location.pathname + '#q=' + encodeQueue(queue);
   }
 
+  /* Keep the live queue in the URL, not only in localStorage.
+
+     The diagnostic settled it: storage probes fine, and the saved queue reads
+     back as 0 tracks — writes are accepted and then wiped between visits. Brave
+     does this by design (Forgetful Browsing clears first-party storage shortly
+     after you leave a site), and private windows and some in-app webviews behave
+     the same way. Saving more often cannot win that argument.
+
+     A queue encoded in the hash travels with the page itself, so reloading, the
+     back button, history and bookmarks all restore it with no storage involved.
+     replaceState keeps it out of the history stack, so this never hijacks Back.
+     Merging on read makes re-importing your own hash a no-op. */
+  var MAX_HASH = 30000;     // beyond this the URL becomes unwieldy; storage only
+  function syncHash(){
+    try {
+      if(!queue.length){
+        history.replaceState(null, '', location.pathname + location.search);
+        return;
+      }
+      var enc = encodeQueue(queue);
+      if(enc.length > MAX_HASH) return;
+      history.replaceState(null, '', location.pathname + location.search + '#q=' + enc);
+    } catch(e){}
+  }
+
   function download(name, content, type){
     var blob = new Blob([content], { type: type });
     var a = document.createElement('a');
@@ -571,6 +596,7 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
     $('app').style.display   = 'flex';
     renderQueue();
     save();
+    syncHash();
     if(idx < 0) play(0);           // nothing was loaded, so start the first one
     return added;
   }
@@ -860,6 +886,7 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
     $('app').style.display   = 'flex';
     renderQueue();
     save();
+    syncHash();                            // carry it in the URL too
     if(idx < 0 && queue.length) play(0);   // nothing was playing, so begin
     return added;
   }
@@ -870,6 +897,7 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
     $('recv').style.display = 'none';
     $('app').style.display = 'flex';
     renderQueue();
+    syncHash();
     var i = (typeof startIdx === 'number' && startIdx >= 0 && startIdx < list.length) ? startIdx : 0;
     play(i, startPos);
   }
@@ -901,9 +929,19 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
     try { var raw = localStorage.getItem(STORE); stored = raw ? (JSON.parse(raw).queue || []).length : 0; } catch(e){}
     var d = $('diag');
     if(d){
-      d.textContent = 'storage: ' + probe
-        + ' · saved queue: ' + stored + ' tracks'
-        + (saveErr ? ' · last write failed: ' + saveErr : '');
+      var line = 'storage: ' + probe + ' · saved queue: ' + stored + ' tracks'
+               + (saveErr ? ' · last write failed: ' + saveErr : '');
+      // Writes work but nothing survived: the browser is clearing site data
+      // between visits rather than rejecting it. Say so, since the remedy is a
+      // browser setting and not something the page can fix on its own.
+      if(probe === 'ok' && !stored){
+        line += '\n\nYour browser accepted the save and then cleared it. In Brave '
+              + 'this is Forget by default — turn it off for this site in Shields, '
+              + 'or add the page to your home screen. Until then, keep a queue '
+              + 'link and use Paste a queue link above.';
+      }
+      d.style.whiteSpace = 'pre-line';
+      d.textContent = line;
       d.style.display = 'block';
     }
   }
