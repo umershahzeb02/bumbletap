@@ -151,6 +151,23 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
 .empty .steps{text-align:left;font-size:12px;color:var(--t2);line-height:2;background:var(--s1);
   border:1px solid var(--sep);border-radius:12px;padding:14px 18px}
 .empty .steps b{color:var(--acc2);font-weight:700}
+/* ---------- camera scanner ---------- */
+.scan{position:fixed;inset:0;z-index:40;background:#000;display:none;flex-direction:column}
+.scan.show{display:flex}
+.scan video{flex:1;width:100%;object-fit:cover;background:#000}
+.scan-frame{position:absolute;top:50%;left:50%;transform:translate(-50%,-55%);
+  width:min(68vw,300px);aspect-ratio:1;border-radius:20px;pointer-events:none;
+  box-shadow:0 0 0 100vmax rgba(0,0,0,.55);border:2px solid rgba(255,255,255,.85)}
+.scan-bar{position:absolute;left:0;right:0;bottom:0;padding:20px var(--pad) calc(24px + env(safe-area-inset-bottom,0px));
+  background:linear-gradient(transparent,rgba(0,0,0,.85) 42%);
+  display:flex;flex-direction:column;align-items:center;gap:12px}
+.scan-txt{font-size:13px;color:#fff;text-align:center;line-height:1.5;max-width:290px}
+.scan-prog{width:220px;max-width:70vw;height:7px;border-radius:4px;background:rgba(255,255,255,.16);overflow:hidden}
+.scan-progf{height:100%;width:0;background:var(--acc);transition:width .25s ease}
+.scan-count{font-family:ui-monospace,Menlo,monospace;font-size:13px;font-weight:700;color:var(--acc2);letter-spacing:.08em}
+.scan-x{position:absolute;top:calc(14px + env(safe-area-inset-top,0px));right:14px;
+  width:38px;height:38px;border-radius:50%;border:none;background:rgba(0,0,0,.55);
+  color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer}
 .empty-acts{display:flex;flex-direction:column;gap:9px;width:100%;max-width:290px}
 .ea{height:46px;border-radius:12px;border:1px solid var(--sep);background:var(--s1);
   color:var(--t1);font-family:inherit;font-size:14px;font-weight:600;cursor:pointer;
@@ -188,6 +205,9 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.28)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
     <span class="head-t">Audio Player</span>
     <span class="head-c" id="hc">0</span>
+    <button class="head-b" id="hscan" aria-label="Scan codes from your computer" title="Scan from computer" style="display:none">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="12" x2="17" y2="12"/></svg>
+    </button>
     <button class="head-b" id="hshare" aria-label="Copy queue link" title="Copy queue link">
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>
     </button>
@@ -255,6 +275,7 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
        which is display:none whenever the queue is empty, so the import button
        was hidden at precisely the moment it was needed. -->
   <div class="empty-acts">
+    <button class="ea" id="escan" style="display:none">Scan continuously</button>
     <button class="ea" id="eimp">Import a file</button>
     <button class="ea" id="elink">Paste a queue link</button>
   </div>
@@ -267,11 +288,28 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
      reliably opened with .click() in every browser. -->
 <input type="file" class="file-hidden" id="hfile" accept=".json,.m3u,.m3u8,.txt,application/json,text/plain">
 
+<div class="scan" id="scan">
+  <video id="scanvid" playsinline muted></video>
+  <div class="scan-frame"></div>
+  <button class="scan-x" id="scanx" aria-label="Stop scanning">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+  </button>
+  <div class="scan-bar">
+    <div class="scan-txt" id="scantxt">Point at your computer screen. Keep it steady — the codes cycle on their own.</div>
+    <div class="scan-prog"><div class="scan-progf" id="scanprogf"></div></div>
+    <div class="scan-count" id="scancount">0 / ?</div>
+  </div>
+</div>
+
 <div class="empty" id="recv" style="display:none">
   <h2 id="recvh">Receiving…</h2>
   <p id="recvp">Scan the next code on your computer.</p>
   <div class="recv-bar"><div class="recv-fill" id="recvfill"></div></div>
   <div class="recv-count" id="recvcount">0 / 0</div>
+  <!-- Mid-transfer escape from scan-tap-scan-tap into the hands-free flow. -->
+  <div class="empty-acts" style="margin-top:6px">
+    <button class="ea" id="recvscan" style="display:none">Scan the rest continuously</button>
+  </div>
 </div>
 
 <div class="gate" id="gate">
@@ -313,8 +351,12 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
     while(s.length % 4) s += '=';
     return decodeURIComponent(escape(atob(s)));
   }
-  function readHash(){
-    var h = location.hash.replace(/^#/,'');
+  // Parses a handoff out of any string carrying one: this page's own hash, a
+  // pasted link, or the text decoded from a QR frame by the camera scanner.
+  function parseHandoff(str){
+    var h = String(str == null ? '' : str);
+    var cut = h.indexOf('#');
+    if(cut >= 0) h = h.slice(cut + 1);
     if(!h) return null;
     var params = {};
     h.split('&').forEach(function(kv){
@@ -339,6 +381,7 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
       return null;
     }
   }
+  function readHash(){ return parseHandoff(location.hash); }
 
   /* ---------- multi-part reassembly ----------
      A queue too large for one QR is split across several codes on the computer.
@@ -373,33 +416,31 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
     $('recvfill').style.width = Math.round(have / n * 100) + '%';
   }
 
-  function handleIncoming(inc){
-    if(!inc || !inc.tracks || !inc.tracks.length) return false;
-    // Strip the payload so a reload or accidental share-back never re-imports it.
-    history.replaceState(null, '', location.pathname + location.search);
+  /* Fold one handoff part into its session pool and report progress.
 
-    // A lone code: merge it in and start playing if nothing was.
+     Shared by the URL path (one code per scan, page reloads each time) and the
+     camera scanner (many codes in one sitting, no reload). Parts are keyed by
+     index, so seeing the same frame repeatedly — which the scanner does
+     constantly while the PC loops its codes — is idempotent.
+
+     Returns {done, have, n, tracks} where tracks is set only once complete. */
+  function ingest(inc){
+    if(!inc || !inc.tracks || !inc.tracks.length) return null;
+
     if(inc.n <= 1 || !inc.sid){
-      var n1 = receive(inc.tracks);
-      toast(n1 ? ('Added ' + n1 + ' track' + (n1 > 1 ? 's' : ''))
-               : 'Already in your queue');
-      return true;
+      return { done: true, have: 1, n: 1, tracks: inc.tracks };
     }
 
-    // A part of a larger transfer: fold it into the pool for its session.
     xferSweep();
     var bucket = null;
     try { bucket = JSON.parse(localStorage.getItem(XKEY + inc.sid)); } catch(e){}
     if(!bucket || bucket.n !== inc.n) bucket = { n: inc.n, parts: {}, ts: Date.now() };
-    bucket.parts[inc.c] = inc.tracks;      // rescanning the same code is idempotent
+    bucket.parts[inc.c] = inc.tracks;
     bucket.ts = Date.now();
     try { localStorage.setItem(XKEY + inc.sid, JSON.stringify(bucket)); } catch(e){}
 
     var have = 0; for(var key in bucket.parts) if(bucket.parts.hasOwnProperty(key)) have++;
-    if(have < inc.n){
-      showReceiving(have, inc.n);
-      return true;
-    }
+    if(have < inc.n) return { done: false, have: have, n: inc.n, tracks: null };
 
     // Every part is in — stitch them in order and drop any duplicate url.
     var seen = {}, list = [];
@@ -407,8 +448,21 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
       (bucket.parts[p] || []).forEach(function(t){ if(!seen[t.url]){ seen[t.url] = 1; list.push(t); } });
     }
     try { localStorage.removeItem(XKEY + inc.sid); } catch(e){}
-    var nAll = receive(list);
-    toast('Received all ' + inc.n + ' parts — added ' + nAll);
+    return { done: true, have: inc.n, n: inc.n, tracks: list };
+  }
+
+  function handleIncoming(inc){
+    if(!inc || !inc.tracks || !inc.tracks.length) return false;
+    // Strip the payload so a reload or accidental share-back never re-imports it.
+    history.replaceState(null, '', location.pathname + location.search);
+
+    var r = ingest(inc);
+    if(!r) return false;
+    if(!r.done){ showReceiving(r.have, r.n); return true; }
+
+    var added = receive(r.tracks);
+    toast(added ? ('Added ' + added + ' track' + (added > 1 ? 's' : ''))
+                : 'Already in your queue');
     return true;
   }
 
@@ -815,6 +869,95 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
   window.addEventListener('pagehide', save);
   document.addEventListener('visibilitychange', function(){ if(document.hidden) save(); });
 
+  /* ---------- continuous camera scanning ----------
+     The manual flow costs one scan and one click per code, which is fine for a
+     single code and miserable for six. Here the computer cycles its codes on a
+     timer and the phone keeps decoding, so a multi-part transfer is: hold the
+     phone up once, wait, done.
+
+     Uses the native BarcodeDetector — no decoder library, so nothing extra to
+     download. It is absent on iOS Safari, where the button stays hidden and the
+     existing scan-per-code flow remains. */
+  var scanStream = null, scanRAF = 0, scanning = false, scanSid = null;
+  var SCAN_OK = ('BarcodeDetector' in window) &&
+                !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+
+  function scanStatus(have, n){
+    $('scancount').textContent = have + ' / ' + (n || '?');
+    $('scanprogf').style.width = n ? Math.round(have / n * 100) + '%' : '0%';
+    if(n > 1) $('scantxt').textContent = 'Captured ' + have + ' of ' + n + '. Keep holding steady.';
+  }
+
+  function stopScan(){
+    scanning = false;
+    if(scanRAF) cancelAnimationFrame(scanRAF), scanRAF = 0;
+    if(scanStream){ scanStream.getTracks().forEach(function(t){ t.stop(); }); scanStream = null; }
+    var v = $('scanvid');
+    try { v.pause(); v.srcObject = null; } catch(e){}
+    $('scan').classList.remove('show');
+  }
+
+  function onScanned(text){
+    var inc = parseHandoff(text);
+    if(!inc) return;                                   // some other QR in frame
+    // Ignore a code from a different transfer once one is under way, so a stale
+    // code still on screen cannot corrupt the set being collected.
+    if(scanSid && inc.sid && inc.sid !== scanSid) return;
+    if(inc.sid) scanSid = inc.sid;
+
+    var r = ingest(inc);
+    if(!r) return;
+    scanStatus(r.have, r.n);
+    if(!r.done) return;
+
+    stopScan();
+    var added = receive(r.tracks);
+    toast(added ? ('Added ' + added + ' track' + (added > 1 ? 's' : ''))
+                : 'Already in your queue');
+  }
+
+  function startScan(){
+    if(!SCAN_OK){ toast('This browser cannot scan — use the QR link instead'); return; }
+    scanSid = null;
+    $('scan').classList.add('show');
+    $('scantxt').textContent = 'Point at your computer screen. Keep it steady — the codes cycle on their own.';
+    scanStatus(0, 0);
+
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+      .then(function(stream){
+        scanStream = stream;
+        var v = $('scanvid');
+        v.srcObject = stream;
+        return v.play();
+      })
+      .then(function(){
+        var det = new window.BarcodeDetector({ formats: ['qr_code'] });
+        var v = $('scanvid'), busy = false;
+        scanning = true;
+        var tick = function(){
+          if(!scanning) return;
+          scanRAF = requestAnimationFrame(tick);
+          // detect() is async; skip frames while one is in flight rather than
+          // queueing them up behind a slow decode.
+          if(busy || v.readyState < 2) return;
+          busy = true;
+          det.detect(v)
+            .then(function(codes){
+              busy = false;
+              for(var i = 0; i < codes.length && scanning; i++) onScanned(codes[i].rawValue);
+            })
+            .catch(function(){ busy = false; });
+        };
+        tick();
+      })
+      .catch(function(err){
+        stopScan();
+        toast(err && err.name === 'NotAllowedError'
+          ? 'Camera permission denied'
+          : 'Could not open the camera');
+      });
+  }
+
   function pickFile(){ $('hfile').click(); }
 
   /* Restore from a link that was copied earlier. The whole queue rides in the
@@ -854,6 +997,17 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
   $('himp').onclick   = pickFile;
   $('eimp').onclick   = pickFile;      // same action, reachable from the empty screen
   $('elink').onclick  = pasteLink;
+  $('escan').onclick  = startScan;
+  $('scanx').onclick  = stopScan;
+  // Only offer scanning where it can actually work.
+  if(SCAN_OK){
+    $('escan').style.display   = 'block';
+    $('hscan').style.display   = 'flex';    // adding more while a queue is loaded
+    $('recvscan').style.display = 'block';  // rescuing a half-finished transfer
+  }
+  $('hscan').onclick    = startScan;
+  $('recvscan').onclick = startScan;
+  addEventListener('pagehide', stopScan);
   $('hfile').onchange = function(e){
     var f = e.target.files && e.target.files[0];
     if(f) importFile(f);

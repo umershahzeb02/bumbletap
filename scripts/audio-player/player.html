@@ -223,6 +223,7 @@ body{font-family:'DM Sans',-apple-system,BlinkMacSystemFont,sans-serif;backgroun
     <button class="sheet-navbtn" id="sheetprev" aria-label="Previous code">‹ Prev</button>
     <span class="sheet-navlbl" id="sheetnavlbl">1 / 1</span>
     <button class="sheet-navbtn" id="sheetnext" aria-label="Next code">Next ›</button>
+    <button class="sheet-navbtn" id="sheetauto" aria-label="Pause or resume cycling">Auto</button>
   </div>
   <button class="sheet-btn" id="sheetcopy">Copy link instead</button>
   <div class="sheet-warn" id="sheetwarn" style="display:none"></div>
@@ -1184,15 +1185,47 @@ function chunkQueue(all){
 
 var xfer=null;   // { chunks:[[track,...],...], i, sid }
 
+/* ===== AUTO-CYCLING CODES =====
+   Manually advancing meant one scan and one click per code, which scales badly:
+   six codes is six trips back to the keyboard. The codes now rotate on their
+   own and wrap around forever, so the phone's continuous scanner can sit and
+   collect the whole set in one go without anyone touching either device.
+
+   Prev/Next still work and pause the rotation, since stepping through by hand
+   is the fallback when the phone cannot scan continuously. */
+var CYCLE_MS=900;          // slow enough for a camera to lock focus and decode
+var cycleT=null;
+
+function stopCycle(){ if(cycleT){clearInterval(cycleT);cycleT=null;} updateCycleBtn(); }
+function startCycle(){
+  if(!xfer||xfer.chunks.length<2)return;
+  stopCycle();
+  cycleT=setInterval(function(){
+    if(!xfer){stopCycle();return;}
+    xfer.i=(xfer.i+1)%xfer.chunks.length;   // wrap: a missed frame comes round again
+    renderXferFrame();
+  },CYCLE_MS);
+  updateCycleBtn();
+}
+function updateCycleBtn(){
+  var b=$('sheetauto');
+  if(!b)return;
+  b.textContent=cycleT?'Pause':'Auto';
+  b.classList.toggle('on',!!cycleT);
+}
+
 function renderXferFrame(){
   if(!xfer)return;
   var n=xfer.chunks.length,ch=xfer.chunks[xfer.i];
   drawQR(buildLink(ch,xfer.sid,xfer.i+1,n));
   if(n>1){
     $('sheetnavlbl').textContent=(xfer.i+1)+' / '+n;
-    $('sheetprev').disabled=xfer.i===0;
-    $('sheetnext').disabled=xfer.i===n-1;
-    $('sheetmode').textContent='Code '+(xfer.i+1)+' of '+n+' — scan, then Next';
+    // Wrapping means there is always a next and a previous.
+    $('sheetprev').disabled=false;
+    $('sheetnext').disabled=false;
+    $('sheetmode').textContent=cycleT
+      ? 'Cycling '+(xfer.i+1)+' of '+n+' — hold your phone up'
+      : 'Code '+(xfer.i+1)+' of '+n;
   }else{
     $('sheetmode').textContent=ch.length+' track'+(ch.length>1?'s':'')+' ready';
   }
@@ -1228,14 +1261,16 @@ function openSheet(){
 
   if(chunks.length>1){
     $('sheetnav').classList.add('show');
-    $('sheetsub').textContent='Scan each code in turn — your phone collects them until all '+chunks.length+' are in.';
+    $('sheetsub').textContent='Open the player on your phone, tap Scan, and hold it up — the '+chunks.length+' codes cycle on their own.';
     $('sheetdot').className='sheet-dot wait';
+    renderXferFrame();
+    startCycle();          // hands-free by default; Prev/Next pauses it
   }else{
     $('sheetnav').classList.remove('show');
     $('sheetsub').textContent='Scan with your phone camera to open the queue';
     $('sheetdot').className='sheet-dot';
+    renderXferFrame();
   }
-  renderXferFrame();
 
   if(oversize.length){
     $('sheetwarn').textContent=oversize.length+' track'+(oversize.length>1?'s':'')+' too large to scan — Copy link sends '+(oversize.length>1?'them':'it')+' too.';
@@ -1244,6 +1279,7 @@ function openSheet(){
 }
 
 function closeSheet(){
+  stopCycle();                 // never leave a timer redrawing a hidden canvas
   $('sheet').classList.remove('show');
   $('sheetnav').classList.remove('show');
   xfer=null;
@@ -1254,8 +1290,11 @@ $('qphone').onclick = openSheet;
 $('sheetx').onclick = closeSheet;
 $('sheet').addEventListener('click', e => { if (e.target === $('sheet')) closeSheet(); });
 $('sheetcopy').onclick = () => { if (sheetLink) navigator.clipboard.writeText(sheetLink).then(() => qToast('Link copied')); };
-$('sheetprev').onclick = () => { if (xfer && xfer.i > 0) { xfer.i--; renderXferFrame(); } };
-$('sheetnext').onclick = () => { if (xfer && xfer.i < xfer.chunks.length - 1) { xfer.i++; renderXferFrame(); } };
+// Stepping by hand means taking manual control, so both stop the rotation and
+// wrap, rather than dead-ending at the first and last code.
+$('sheetprev').onclick = () => { if (!xfer) return; stopCycle(); xfer.i = (xfer.i - 1 + xfer.chunks.length) % xfer.chunks.length; renderXferFrame(); };
+$('sheetnext').onclick = () => { if (!xfer) return; stopCycle(); xfer.i = (xfer.i + 1) % xfer.chunks.length; renderXferFrame(); };
+$('sheetauto').onclick = () => { if (!xfer) return; cycleT ? stopCycle() : startCycle(); renderXferFrame(); };
 
 document.addEventListener('keydown',e=>{
   if(e.target.tagName==='INPUT')return;
