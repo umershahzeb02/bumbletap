@@ -2,7 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<!-- No maximum-scale / user-scalable=no. Safari ignores those for pinch zoom,
+     but every other browser honours them and blocks zooming entirely, which
+     fails WCAG 1.4.4 — anyone who needs to magnify the queue or a track title
+     simply cannot. Nothing here is a text input, so letting zoom back in
+     carries no focus-zoom side effect. viewport-fit stays: the safe-area insets
+     the layout uses depend on it. -->
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#000000">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
