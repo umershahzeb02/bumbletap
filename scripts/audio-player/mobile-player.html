@@ -80,6 +80,27 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
 .head-b:active{transform:scale(.88);background:var(--s2);color:var(--t1)}
 .file-hidden{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 
+/* ---------- add one link by hand ---------- */
+/* Collapsed until the + in the header is tapped. The PC popup can afford a
+   permanent input row above the queue; a phone screen cannot, and this is a
+   thing you reach for occasionally rather than constantly. */
+.add-sec{display:none;padding:0 var(--pad) 10px}
+.add-sec.open{display:block}
+.add-row{display:flex;gap:8px}
+.add-input{flex:1;min-width:0;height:42px;padding:0 12px;border-radius:11px;
+  border:1px solid var(--sep);background:var(--s1);color:var(--t1);
+  font-family:inherit;outline:none;
+  /* 16px exactly: iOS Safari zooms the whole page when a focused input's text
+     is smaller than that, and the zoom does not come back on blur. */
+  font-size:16px}
+.add-input::placeholder{color:var(--t3)}
+.add-input:focus{border-color:var(--acc)}
+.add-btn{height:42px;padding:0 15px;border-radius:11px;border:none;
+  background:var(--acc);color:#fff;font-family:inherit;font-size:14px;
+  font-weight:600;flex-shrink:0;cursor:pointer;
+  transition:transform .12s,filter .15s}
+.add-btn:active{transform:scale(.95);filter:brightness(.9)}
+
 /* ---------- now playing ---------- */
 .stage{flex:1;display:flex;flex-direction:column;justify-content:center;padding:0 var(--pad);min-height:0}
 .art{
@@ -211,6 +232,9 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.28)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
     <span class="head-t">Audio Player</span>
     <span class="head-c" id="hc">0</span>
+    <button class="head-b" id="hadd" aria-label="Add a link" title="Add a link">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
     <button class="head-b" id="hscan" aria-label="Scan codes from your computer" title="Scan from computer" style="display:none">
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="12" x2="17" y2="12"/></svg>
     </button>
@@ -223,6 +247,17 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
     <button class="head-b" id="himp" aria-label="Import queue" title="Import queue">
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
     </button>
+  </div>
+
+  <!-- Revealed by the + in the header. Sits directly under it so the queue
+       below is not pushed around when it opens. -->
+  <div class="add-sec" id="addsec">
+    <div class="add-row">
+      <input class="add-input" id="urlin" type="url" inputmode="url"
+             placeholder="Paste audio URL…" spellcheck="false"
+             autocomplete="off" autocapitalize="off" autocorrect="off">
+      <button class="add-btn" id="addbtn">Add</button>
+    </div>
   </div>
 
   <div class="stage">
@@ -282,6 +317,7 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
        was hidden at precisely the moment it was needed. -->
   <div class="empty-acts">
     <button class="ea" id="escan" style="display:none">Scan continuously</button>
+    <button class="ea" id="eadd">Add a link</button>
     <button class="ea" id="eimp">Import a file</button>
     <button class="ea" id="elink">Paste a queue link</button>
   </div>
@@ -1019,6 +1055,50 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
     if(f) importFile(f);
     e.target.value = '';        // let the same file be picked again
   };
+
+  /* ---------- add one track by URL ---------- */
+  /* The popup on the PC has always had this; the phone could only receive a
+     queue, import a file, or restore from a queue link — there was no way to
+     put in a single link you happened to have.
+
+     Everything after validation goes through importTracks, which already
+     dedupes by url, flips the empty screen over to the player, re-renders,
+     saves, keeps the hash in sync, and starts playing when nothing was
+     loaded. Duplicating any of that here is how the two paths drift. */
+  function addUrl(str){
+    var u = String(str || '').trim();
+    if(!u) return 0;
+    // importTracks silently drops anything that is not http(s), so catch it
+    // here where there is still a user to tell.
+    if(!/^https?:\/\//i.test(u)){ toast('That needs to be an http or https link'); return 0; }
+    var name = '';
+    try {
+      name = decodeURIComponent(u.split('/').pop().split('?')[0]).slice(0, 60);
+    } catch(e){
+      name = '';                 // a malformed %-escape should not lose the track
+    }
+    var n = importTracks([{ url: u, title: name || 'Custom URL' }]);
+    toast(n ? 'Added' : 'Already in your queue');
+    return n;
+  }
+
+  $('hadd').onclick = function(){
+    var open = $('addsec').classList.toggle('open');
+    if(open) $('urlin').focus();
+  };
+  $('addbtn').onclick = function(){
+    if(addUrl($('urlin').value)){
+      $('urlin').value = '';
+      $('addsec').classList.remove('open');   // done with it; give the space back
+    }
+  };
+  $('urlin').addEventListener('keydown', function(e){
+    if(e.key === 'Enter') $('addbtn').click();
+  });
+  /* From the empty screen there is no input to reveal, because #app — and the
+     header holding the + — is display:none until something is queued. Prompt
+     instead, the same fallback pasteLink uses. */
+  $('eadd').onclick = function(){ addUrl(window.prompt('Paste the audio URL') || ''); };
 
   /* ---------- boot ---------- */
   /* Merge an incoming handoff into whatever is already on the phone.
