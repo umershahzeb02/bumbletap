@@ -36,8 +36,11 @@ Drag the pill anywhere. It settles against the nearer side edge and stays there
 on every site. The Tampermonkey menu has **Show or hide the notes pill on this
 site** and **Move the notes pill back to the top-right corner**.
 
-Other pages on the same site that have notes are listed, collapsed, at the foot
-of the panel.
+Below this page's notes are the notes from every other page on the same site,
+in full, newest first. Reading them doesn't leave the page you're on; the ↗
+beside each page's title is what takes you there, and a to-do from another page
+can be ticked right where it is shown. The section stays open unless you fold
+it away.
 
 ## What counts as the same page
 

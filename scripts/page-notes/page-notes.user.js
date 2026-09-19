@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Page Notes
 // @namespace    shahzeb.tools
-// @version      1.0.0
+// @version      1.1.0
 // @description  Notes for every web page, kept per page. A pill in the top-right corner opens them; drag it anywhere. Built in a closed shadow root, so it never touches the page's styles.
 // @match        *://*/*
 // @noframes
@@ -167,7 +167,7 @@
   const HIDE_KEY = 'ui:hide:' + location.hostname;
 
   let host = null, shadow = null;
-  let pill, pillCount, pillPeek, panel, fav, headTitle, headSub, delBtn, doc;
+  let pill, pillCount, pillPeek, panel, fav, headTitle, headSub, delBtn, scroller, doc;
   let siteBox, siteToggle, siteLabel, siteList, toast, toastText, toastUndo;
 
   function normPos(p) {
@@ -352,17 +352,17 @@ button { font: inherit; color: inherit; margin: 0; }
 .btn:hover { background: var(--hover); color: var(--fg); }
 .btn:active { background: var(--press); transform: scale(.96); }
 
-.doc {
-  position: relative;
+/* One scroller for this page's notes and the rest of the site's, so the panel
+   reads top to bottom as a single document. */
+.body {
   flex: 1 1 auto;
-  min-height: 72px;
-  padding: 4px 14px 16px;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  cursor: text;
   scrollbar-width: thin;
   scrollbar-color: var(--fg3) transparent;
 }
+.doc { min-height: 72px; padding: 4px 14px 16px; cursor: text; }
 .block { display: flex; align-items: flex-start; gap: 8px; padding: 2px 0; }
 .block[data-type="h"] { padding-top: 8px; }
 .block[data-type="h"]:first-child { padding-top: 2px; }
@@ -425,7 +425,7 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
 .block[data-type="h"] .mark { height: 24px; }
 .block[data-done="1"] textarea { color: var(--fg3); text-decoration: line-through; }
 
-.site { flex: 0 0 auto; padding: 6px; border-top: 1px solid var(--line); }
+.site { padding: 6px 6px 8px; border-top: 1px solid var(--line); }
 .site-toggle {
   display: flex;
   align-items: center;
@@ -445,27 +445,51 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
 .site-toggle:hover { background: var(--hover); color: var(--fg); }
 .site-toggle svg { flex: 0 0 auto; transition: transform .2s ${EASE}; }
 .site-toggle[aria-expanded="true"] svg { transform: rotate(90deg); }
-.site-list {
-  max-height: 184px;
-  margin: 2px 0 0;
-  padding: 0;
-  list-style: none;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
+.site-list { margin: 0; padding: 0; list-style: none; }
+.group { padding: 8px 8px 6px; }
+.group + .group { border-top: 1px solid var(--line); }
+.group-head { display: flex; align-items: center; gap: 8px; min-height: 24px; margin-bottom: 2px; }
+.group-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
 }
-.site-item {
-  display: block;
-  padding: 6px 8px;
-  border-radius: 10px;
-  color: inherit;
+.group-time { flex: 0 0 auto; font-size: 11.5px; line-height: 16px; color: var(--fg3); }
+.go {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin-right: -4px;
+  border-radius: 6px;
+  color: var(--fg2);
   text-decoration: none;
-  transition: background-color .12s ${EASE};
+  transition-property: background-color, color, transform;
+  transition-duration: .12s;
+  transition-timing-function: ${EASE};
 }
-.site-item:hover { background: var(--hover); }
-.site-item .t, .site-item .s { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.site-item .t { font-size: 13px; font-weight: 500; line-height: 18px; }
-.site-item .s { font-size: 11.5px; line-height: 16px; color: var(--fg2); }
+.go:hover { background: var(--hover); color: var(--fg); }
+.go:active { background: var(--press); transform: scale(.96); }
+.ro { padding: 1px 0; }
+.ro .mark { height: 19px; }
+.ro .text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 19px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.ro[data-type="h"] { padding-top: 4px; }
+.ro[data-type="h"] .mark { height: 20px; }
+.ro[data-type="h"] .text { font-size: 14px; font-weight: 600; line-height: 20px; }
+.ro[data-done="1"] .text { color: var(--fg3); text-decoration: line-through; }
 
 .toast {
   position: absolute;
@@ -505,13 +529,13 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
 .toast button:hover { background: color-mix(in srgb, currentColor 24%, transparent); }
 .toast button:active { transform: scale(.96); }
 
-.pill:focus-visible, button:focus-visible, .site-item:focus-visible {
+.pill:focus-visible, button:focus-visible, .go:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pill, .panel, .toast, .peek, .btn, .box, .box svg, .site-toggle svg {
+  .pill, .panel, .toast, .peek, .btn, .go, .box, .box svg, .site-toggle svg {
     transition-duration: 0s !important;
     transition-delay: 0s !important;
   }
@@ -529,6 +553,7 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
   const I_CLOSE = [['path', { d: 'M4.5 4.5l7 7M11.5 4.5l-7 7' }]];
   const I_CHEVRON = [['path', { d: 'M6 3.75L10.25 8 6 12.25' }]];
   const I_CHECK = [['path', { d: 'M4 8.4l2.5 2.4L12 5.2' }]];
+  const I_GO = [['path', { d: 'M4.75 11.25l6.5-6.5M5.5 4.75h5.75v5.75' }]];
 
   const PLACEHOLDER = { p: 'Write, or type [] for a to-do', todo: 'To-do', ul: 'List', h: 'Heading' };
   const LEAD = 'Write a note about this page';
@@ -608,18 +633,22 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
     const closeBtn = button('btn', 'Close notes (Esc)', icon(I_CLOSE, 16, 1.5));
     head.append(fav, meta, delBtn, closeBtn);
 
+    scroller = el('div', 'body');
     doc = el('div', 'doc');
 
+    // The rest of the site's notes: open, unless you have folded them away.
+    const siteOpen = !!store.get('ui:siteOpen', true);
     siteBox = el('div', 'site');
     siteToggle = el('button', 'site-toggle');
     siteToggle.type = 'button';
-    siteToggle.setAttribute('aria-expanded', 'false');
+    siteToggle.setAttribute('aria-expanded', String(siteOpen));
     siteLabel = el('span');
     siteToggle.append(icon(I_CHEVRON, 12, 1.5), siteLabel);
     siteList = el('ul', 'site-list');
-    siteList.hidden = true;
+    siteList.hidden = !siteOpen;
     siteBox.append(siteToggle, siteList);
     siteBox.hidden = true;
+    scroller.append(doc, siteBox);
 
     toast = el('div', 'toast');
     toast.setAttribute('role', 'status');
@@ -628,7 +657,7 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
     toastUndo.type = 'button';
     toast.append(toastText, toastUndo);
 
-    panel.append(head, doc, siteBox, toast);
+    panel.append(head, scroller, toast);
     root.append(pill, panel);
     shadow.appendChild(root);
     document.documentElement.appendChild(host);
@@ -687,6 +716,16 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
       const show = siteList.hidden;
       siteList.hidden = !show;
       siteToggle.setAttribute('aria-expanded', String(show));
+      store.set('ui:siteOpen', show);
+    });
+    // Another page's to-dos can be ticked from here. Its text is edited on its
+    // own page, which the arrow beside its title goes to.
+    siteList.addEventListener('mousedown', function (e) {
+      if (e.target.closest && e.target.closest('.mark')) e.preventDefault();
+    });
+    siteList.addEventListener('click', function (e) {
+      const mark = e.target.closest && e.target.closest('.check');
+      if (mark) toggleOther(mark.parentNode);
     });
     toastUndo.addEventListener('click', function () {
       const fn = undoFn;
@@ -884,7 +923,7 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
   function refreshHead() {
     if (!headTitle) return;
     const site = location.hostname.replace(/^www\./, '');
-    headTitle.textContent = (document.title || '').trim() || site || 'This page';
+    headTitle.textContent = cleanTitle(document.title) || site || 'This page';
     headSub.textContent = data && data.updated ? site + ' · Edited ' + ago(data.updated) : site;
     delBtn.hidden = !data;
     const src = favicon();
@@ -899,30 +938,68 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
     } catch (e) { return ''; }
   }
 
-  // Other pages on this site that have notes, newest first. Collapsed behind
-  // one line, so it costs nothing until you want it.
+  // Notes from the other pages on this site, newest first, shown in full
+  // below this page's own. Reading them does not leave the page you are on:
+  // the arrow beside each title is the only thing here that navigates.
   function renderSite() {
     const mine = siteKey(key);
     const items = [];
     store.keys().forEach(function (k) {
       if (k.indexOf(NOTE) !== 0 || k === key || siteKey(k) !== mine) return;
       const v = store.get(k, null);
-      if (v && v.blocks && v.blocks.length && /^https?:/i.test(v.url || '')) items.push(v);
+      if (v && v.blocks && v.blocks.length && /^https?:/i.test(v.url || '')) items.push({ k: k, v: v });
     });
+    siteList.textContent = '';
     siteBox.hidden = !items.length;
     if (!items.length) return;
-    items.sort(function (a, b) { return (b.updated || 0) - (a.updated || 0); });
+    items.sort(function (a, b) { return (b.v.updated || 0) - (a.v.updated || 0); });
     siteLabel.textContent = items.length + (items.length === 1 ? ' other page' : ' other pages') +
       ' on ' + (location.hostname.replace(/^www\./, '') || mine);
-    siteList.textContent = '';
-    items.slice(0, 50).forEach(function (v) {
-      const li = el('li');
-      const a = el('a', 'site-item');
-      a.href = v.url;
-      a.append(el('div', 't', v.title || v.url), el('div', 's', firstLine(v)));
-      li.appendChild(a);
-      siteList.appendChild(li);
+    items.slice(0, 50).forEach(function (it) { siteList.appendChild(group(it.k, it.v)); });
+  }
+
+  function group(k, v) {
+    const li = el('li', 'group');
+    li.dataset.key = k;
+    const name = cleanTitle(v.title) || v.url;
+    const top = el('div', 'group-head');
+    const title = el('div', 'group-title', name);
+    title.title = v.url;
+    const go = el('a', 'go');
+    go.href = v.url;
+    go.title = 'Go to this page';
+    go.setAttribute('aria-label', 'Go to ' + name);
+    go.appendChild(icon(I_GO, 16, 1.5));
+    top.append(title, el('span', 'group-time', v.updated ? ago(v.updated) : ''), go);
+    li.appendChild(top);
+    v.blocks.forEach(function (b, i) {
+      const type = TYPES.indexOf(b.type) !== -1 ? b.type : 'p';
+      const done = type === 'todo' && !!b.done;
+      const row = el('div', 'block ro');
+      row.dataset.type = type;
+      row.dataset.done = done ? '1' : '0';
+      row.dataset.i = String(i);
+      const mark = el('span', 'mark');
+      markFor(mark, type, done);
+      row.append(mark, el('div', 'text', String(b.text)));
+      li.appendChild(row);
     });
+    return li;
+  }
+
+  // Saved straight to the other page's entry; that page shows it next time,
+  // or at once if it is open in another tab.
+  function toggleOther(row) {
+    const k = row.parentNode.dataset.key;
+    const v = store.get(k, null);
+    const b = v && v.blocks && v.blocks[+row.dataset.i];
+    if (!b || b.type !== 'todo') return;
+    if (b.done) delete b.done;
+    else b.done = true;
+    v.updated = Date.now();
+    store.set(k, v);
+    row.dataset.done = b.done ? '1' : '0';
+    row.firstChild.setAttribute('aria-checked', String(!!b.done));
   }
 
   function showToast(text, undo) {
@@ -1000,21 +1077,25 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
   function setType(block, type, done) {
     block.dataset.type = type;
     block.dataset.done = type === 'todo' && done ? '1' : '0';
-    const mark = block.firstChild;
+    markFor(block.firstChild, type, block.dataset.done === '1');
+    block.lastChild.placeholder = PLACEHOLDER[type];
+    updateLead();
+  }
+
+  // The bullet or checkbox beside a block, shared by the editor and by the
+  // notes shown from the rest of the site.
+  function markFor(mark, type, done) {
     mark.textContent = '';
     mark.className = 'mark';
     ['role', 'aria-checked', 'aria-label'].forEach(function (a) { mark.removeAttribute(a); });
-    if (type === 'todo') {
-      mark.className = 'mark check';
-      mark.setAttribute('role', 'checkbox');
-      mark.setAttribute('aria-checked', String(block.dataset.done === '1'));
-      mark.setAttribute('aria-label', 'Done');
-      const box = el('span', 'box');
-      box.appendChild(icon(I_CHECK, 10, 2.4));
-      mark.appendChild(box);
-    }
-    block.lastChild.placeholder = PLACEHOLDER[type];
-    updateLead();
+    if (type !== 'todo') return;
+    mark.className = 'mark check';
+    mark.setAttribute('role', 'checkbox');
+    mark.setAttribute('aria-checked', String(done));
+    mark.setAttribute('aria-label', 'Done');
+    const box = el('span', 'box');
+    box.appendChild(icon(I_CHECK, 10, 2.4));
+    mark.appendChild(box);
   }
 
   function toggleDone(block) {
@@ -1064,9 +1145,9 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
     try { ta.focus({ preventScroll: true }); } catch (e) { ta.focus(); }
     const p = at === 'end' ? ta.value.length : at;
     try { ta.setSelectionRange(p, p); } catch (e) {}
-    const top = block.offsetTop, bottom = top + block.offsetHeight;
-    if (top < doc.scrollTop) doc.scrollTop = Math.max(0, top - 8);
-    else if (bottom > doc.scrollTop + doc.clientHeight) doc.scrollTop = bottom - doc.clientHeight + 8;
+    const b = block.getBoundingClientRect(), view = scroller.getBoundingClientRect();
+    if (b.top < view.top) scroller.scrollTop -= view.top - b.top + 8;
+    else if (b.bottom > view.bottom) scroller.scrollTop += b.bottom - view.bottom + 8;
   }
 
   // Markdown as you type, the way Notion does it: "[] " starts a to-do,
@@ -1189,7 +1270,7 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
       if (data) { store.del(key); data = null; }
     } else {
       const now = Date.now();
-      const title = leaving ? '' : (document.title || '').trim();
+      const title = leaving ? '' : cleanTitle(document.title);
       data = {
         url: pageHref,
         title: title || (data && data.title) || '',
@@ -1364,6 +1445,12 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
   // =====================================================================
   // Small things
   // =====================================================================
+
+  // "(2) Feed | LinkedIn": the number is the site's unread badge, not part of
+  // the page's name.
+  function cleanTitle(t) {
+    return String(t || '').replace(/^\(\d+\+?\)\s*/, '').trim();
+  }
 
   function firstLine(d) {
     const b = d && d.blocks && d.blocks[0];
