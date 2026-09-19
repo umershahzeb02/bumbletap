@@ -1,12 +1,14 @@
 # bumbletap
 
-Browser tooling hosted on GitHub Pages. Two independent projects, each a folder
+Browser tooling hosted on GitHub Pages. Independent projects, each a folder
 under `scripts/`, sharing one Pages deployment.
 
 | Project | What it does |
 |---|---|
 | [`scripts/remote-tab-control`](scripts/remote-tab-control) | Control any browser tab from your phone — trackpad, scroll, d-pad, keyboard |
 | [`scripts/audio-player`](scripts/audio-player) | Detect audio on any page, queue it across sites, hand the queue to your phone by QR |
+| [`scripts/copy-pill`](scripts/copy-pill) | A Copy button beside any selected text, plus Open when the selection holds a link |
+| [`scripts/page-notes`](scripts/page-notes) | Notes kept per web page, behind a draggable pill in the corner |
 
 Live at `https://umershahzeb02.github.io/bumbletap/`.
 
@@ -19,12 +21,16 @@ scripts/
 │   ├── bridge.html              WebRTC popup (iframes restrict WebRTC)
 │   ├── remote-control.js        desktop script — inject this
 │   └── trystero-*.min.js        bundled P2P signalling
-└── audio-player/
-    ├── player.html              desktop queue/player window
-    ├── mobile-player.html       phone-side receiver (the QR target)
-    ├── audio-float-player.js    page script — inject this
-    ├── id3.js                   ID3v2 tag reader
-    └── EXTENSION-SETUP.md       Chrome extension wiring
+├── audio-player/
+│   ├── player.html              desktop queue/player window
+│   ├── mobile-player.html       phone-side receiver (the QR target)
+│   ├── audio-float-player.js    page script — inject this
+│   ├── id3.js                   ID3v2 tag reader
+│   └── EXTENSION-SETUP.md       Chrome extension wiring
+├── copy-pill/
+│   └── copy-pill.user.js        userscript — install from the raw URL
+└── page-notes/
+    └── page-notes.user.js       userscript — install from the raw URL
 ```
 
 Both projects host a page that a phone opens by QR, so both need real public
