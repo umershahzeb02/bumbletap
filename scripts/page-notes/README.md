@@ -17,16 +17,21 @@ content. To pull a change immediately: Tampermonkey dashboard → **Utilities** 
 
 ## Writing
 
-Notes are blocks, as in Notion.
+Notes are blocks, as in Notion. Type `/` at the start of a block for the
+format menu, or use the shortcut beside each one as you type:
 
 | Type | Get |
 |---|---|
+| `# ` / `## ` | heading / subheading |
+| `[] ` | a to-do; Ctrl/Cmd+Enter ticks it |
+| `- ` / `1. ` | bulleted / numbered list |
+| `> ` | a quote |
+| `! ` | a highlight |
+| ` ``` ` | a code block (Enter on an empty last line leaves it) |
+| `---` | a divider |
 | Enter | a new block (Shift+Enter for a line break inside one) |
-| `[] ` at the start of a block | a to-do; Ctrl/Cmd+Enter ticks it |
-| `- ` | a bullet |
-| `# ` | a heading |
 | Backspace at the start of a block | turns it back into text, then joins it to the block above |
-| Esc | closes the panel; Alt+N toggles it from anywhere on the page |
+| Esc | closes the menu, then the panel; Alt+N toggles it from anywhere on the page |
 
 Everything saves as you type. The bin in the header deletes the page's notes
 and offers Undo instead of asking first. The panel stays open while you read and

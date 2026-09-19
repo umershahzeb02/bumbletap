@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Page Notes
 // @namespace    shahzeb.tools
-// @version      1.1.0
+// @version      1.2.0
 // @description  Notes for every web page, kept per page. A pill in the top-right corner opens them; drag it anywhere. Built in a closed shadow root, so it never touches the page's styles.
 // @match        *://*/*
 // @noframes
@@ -138,7 +138,7 @@
   //   { url, title, blocks: [{ type, text, done }], created, updated }
   // A block is one paragraph, to-do, list item or heading, as in Notion.
   const NOTE = 'note:';
-  const TYPES = ['p', 'todo', 'ul', 'h'];
+  const TYPES = ['p', 'h', 'h2', 'todo', 'ul', 'ol', 'quote', 'callout', 'code', 'hr'];
   const keyFor = function (href) { return NOTE + pageKey(href); };
   const siteKey = function (k) {
     const pk = k.slice(NOTE.length);
@@ -169,6 +169,7 @@
   let host = null, shadow = null;
   let pill, pillCount, pillPeek, panel, fav, headTitle, headSub, delBtn, scroller, doc;
   let siteBox, siteToggle, siteLabel, siteList, toast, toastText, toastUndo;
+  let menu, menuItems = [], menuIndex = 0, menuBlock = null, menuQuery = '';
 
   function normPos(p) {
     return p && (p.side === 'left' || p.side === 'right') && isFinite(p.y) ? p : { side: 'right', y: M };
@@ -374,7 +375,8 @@ button { font: inherit; color: inherit; margin: 0; }
   width: 18px;
   height: 21px;
 }
-.block[data-type="ul"] .mark, .block[data-type="todo"] .mark { display: flex; }
+.block[data-type="ul"] .mark, .block[data-type="todo"] .mark, .block[data-type="ol"] .mark { display: flex; }
+.num { justify-content: flex-end; font-size: 13px; color: var(--fg2); font-variant-numeric: tabular-nums; }
 .block[data-type="ul"] .mark::before {
   content: "";
   width: 5px;
@@ -424,6 +426,59 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
 .block[data-type="h"] textarea { font-size: 16px; font-weight: 600; line-height: 24px; letter-spacing: -.01em; }
 .block[data-type="h"] .mark { height: 24px; }
 .block[data-done="1"] textarea { color: var(--fg3); text-decoration: line-through; }
+.block[data-type="h2"] { padding-top: 6px; }
+.block[data-type="h2"] textarea { font-size: 14.5px; font-weight: 600; line-height: 22px; }
+.block[data-type="quote"] { margin: 2px 0; padding-left: 12px; border-left: 2px solid var(--fg3); }
+.block[data-type="quote"] textarea { color: var(--fg2); }
+.block[data-type="callout"] {
+  margin: 4px 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.block[data-type="code"] { margin: 4px 0; padding: 7px 10px; border-radius: 8px; background: var(--hover); }
+.block[data-type="code"] textarea {
+  font: 12.5px/19px ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  tab-size: 2;
+}
+.block[data-type="hr"] { padding: 9px 0; }
+.block[data-type="hr"] textarea {
+  height: 1px !important;
+  min-height: 1px;
+  background: var(--line);
+  color: transparent;
+  caret-color: transparent;
+  cursor: default;
+}
+.block[data-type="hr"] textarea:focus { background: var(--accent); }
+
+/* The "/" menu, as in Notion. */
+.menu {
+  position: absolute;
+  left: 12px;
+  z-index: 2;
+  width: 224px;
+  max-height: 248px;
+  padding: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: 12px;
+  background: var(--solid);
+  box-shadow: var(--lift);
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 18px;
+  cursor: pointer;
+}
+.menu-item[aria-selected="true"] { background: var(--hover); }
+.menu-hint { font: 11px/1 ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: var(--fg3); }
 
 .site { padding: 6px 6px 8px; border-top: 1px solid var(--line); }
 .site-toggle {
@@ -445,10 +500,12 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
 .site-toggle:hover { background: var(--hover); color: var(--fg); }
 .site-toggle svg { flex: 0 0 auto; transition: transform .2s ${EASE}; }
 .site-toggle[aria-expanded="true"] svg { transform: rotate(90deg); }
-.site-list { margin: 0; padding: 0; list-style: none; }
-.group { padding: 8px 8px 6px; }
-.group + .group { border-top: 1px solid var(--line); }
-.group-head { display: flex; align-items: center; gap: 8px; min-height: 24px; margin-bottom: 2px; }
+/* Other pages' notes keep the look of a quiet list: soft rounded rows, a
+   regular-weight title, the note itself in the secondary grey. */
+.site-list { display: grid; gap: 2px; margin: 2px 0 0; padding: 0; list-style: none; }
+.group { padding: 6px 8px 7px; border-radius: 10px; transition: background-color .12s ${EASE}; }
+.group:hover { background: var(--hover); }
+.group-head { display: flex; align-items: center; gap: 6px; }
 .group-title {
   flex: 1 1 auto;
   min-width: 0;
@@ -456,39 +513,46 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
   white-space: nowrap;
   text-overflow: ellipsis;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 18px;
 }
-.group-time { flex: 0 0 auto; font-size: 11.5px; line-height: 16px; color: var(--fg3); }
 .go {
   flex: 0 0 auto;
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
-  margin-right: -4px;
+  width: 22px;
+  height: 22px;
+  margin: -2px -4px -2px 0;
   border-radius: 6px;
-  color: var(--fg2);
+  color: var(--fg3);
   text-decoration: none;
   transition-property: background-color, color, transform;
   transition-duration: .12s;
   transition-timing-function: ${EASE};
 }
-.go:hover { background: var(--hover); color: var(--fg); }
-.go:active { background: var(--press); transform: scale(.96); }
-.ro { padding: 1px 0; }
-.ro .mark { height: 19px; }
+.group:hover .go { color: var(--fg2); }
+.go:hover { background: var(--press); color: var(--fg); }
+.go:active { transform: scale(.96); }
+.ro { gap: 6px; padding: 0; color: var(--fg2); }
+.ro .mark { width: 14px; height: 17px; }
+.ro .box { width: 13px; height: 13px; }
+.ro .num { font-size: 11.5px; }
 .ro .text {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 13px;
-  line-height: 19px;
+  font-size: 12px;
+  line-height: 17px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.ro[data-type="h"] { padding-top: 4px; }
-.ro[data-type="h"] .mark { height: 20px; }
-.ro[data-type="h"] .text { font-size: 14px; font-weight: 600; line-height: 20px; }
+.ro[data-type="h"], .ro[data-type="h2"] { padding-top: 2px; }
+.ro[data-type="h"] .text, .ro[data-type="h2"] .text { font-weight: 600; color: var(--fg); }
+.ro[data-type="quote"] { margin: 1px 0; padding-left: 8px; }
+.ro[data-type="callout"] { margin: 2px 0; padding: 3px 7px; border-radius: 6px; }
+.ro[data-type="code"] { margin: 2px 0; padding: 4px 7px; border-radius: 6px; }
+.ro[data-type="code"] .text { font: 11.5px/16px ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace; }
+.ro[data-type="hr"] { padding: 6px 0; }
+.ro[data-type="hr"] .text { height: 1px; background: var(--line); }
 .ro[data-done="1"] .text { color: var(--fg3); text-decoration: line-through; }
 
 .toast {
@@ -555,7 +619,24 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
   const I_CHECK = [['path', { d: 'M4 8.4l2.5 2.4L12 5.2' }]];
   const I_GO = [['path', { d: 'M4.75 11.25l6.5-6.5M5.5 4.75h5.75v5.75' }]];
 
-  const PLACEHOLDER = { p: 'Write, or type [] for a to-do', todo: 'To-do', ul: 'List', h: 'Heading' };
+  const PLACEHOLDER = {
+    p: 'Write, or type / for formatting', h: 'Heading', h2: 'Subheading', todo: 'To-do', ul: 'List',
+    ol: 'List', quote: 'Quote', callout: 'Highlight', code: 'Code', hr: ''
+  };
+
+  // What the "/" menu offers, with the shortcut that does the same as you type.
+  const FORMATS = [
+    { type: 'p', label: 'Text', hint: '' },
+    { type: 'h', label: 'Heading', hint: '#' },
+    { type: 'h2', label: 'Subheading', hint: '##' },
+    { type: 'todo', label: 'To-do', hint: '[]' },
+    { type: 'ul', label: 'Bulleted list', hint: '-' },
+    { type: 'ol', label: 'Numbered list', hint: '1.' },
+    { type: 'quote', label: 'Quote', hint: '>' },
+    { type: 'callout', label: 'Highlight', hint: '!' },
+    { type: 'code', label: 'Code', hint: '```' },
+    { type: 'hr', label: 'Divider', hint: '---' }
+  ];
   const LEAD = 'Write a note about this page';
 
   // Built with DOM calls, never innerHTML: sites that enforce Trusted Types
@@ -657,7 +738,12 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
     toastUndo.type = 'button';
     toast.append(toastText, toastUndo);
 
-    panel.append(head, scroller, toast);
+    menu = el('div', 'menu');
+    menu.setAttribute('role', 'listbox');
+    menu.setAttribute('aria-label', 'Format');
+    menu.hidden = true;
+
+    panel.append(head, scroller, menu, toast);
     root.append(pill, panel);
     shadow.appendChild(root);
     document.documentElement.appendChild(host);
@@ -727,6 +813,14 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
       const mark = e.target.closest && e.target.closest('.check');
       if (mark) toggleOther(mark.parentNode);
     });
+
+    // The menu never takes focus, so the caret stays in the note being typed.
+    menu.addEventListener('mousedown', function (e) { e.preventDefault(); });
+    menu.addEventListener('click', function (e) {
+      const item = e.target.closest && e.target.closest('.menu-item');
+      if (item) pickFormat(menuItems[+item.dataset.i]);
+    });
+    scroller.addEventListener('scroll', hideMenu, { passive: true });
     toastUndo.addEventListener('click', function () {
       const fn = undoFn;
       hideToast();
@@ -903,6 +997,7 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
     pill.classList.remove('open');
     pill.setAttribute('aria-expanded', 'false');
     hideToast();
+    hideMenu();
     const inside = shadow.activeElement;
     if (restoreFocus) {
       const target = returnFocus && returnFocus.isConnected ? returnFocus : pill;
@@ -967,10 +1062,10 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
     title.title = v.url;
     const go = el('a', 'go');
     go.href = v.url;
-    go.title = 'Go to this page';
+    go.title = 'Go to this page' + (v.updated ? ' · edited ' + ago(v.updated) : '');
     go.setAttribute('aria-label', 'Go to ' + name);
     go.appendChild(icon(I_GO, 16, 1.5));
-    top.append(title, el('span', 'group-time', v.updated ? ago(v.updated) : ''), go);
+    top.append(title, go);
     li.appendChild(top);
     v.blocks.forEach(function (b, i) {
       const type = TYPES.indexOf(b.type) !== -1 ? b.type : 'p';
@@ -981,9 +1076,10 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
       row.dataset.i = String(i);
       const mark = el('span', 'mark');
       markFor(mark, type, done);
-      row.append(mark, el('div', 'text', String(b.text)));
+      row.append(mark, el('div', 'text', type === 'hr' ? '' : String(b.text)));
       li.appendChild(row);
     });
+    renumber(li);
     return li;
   }
 
@@ -1088,6 +1184,7 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
     mark.textContent = '';
     mark.className = 'mark';
     ['role', 'aria-checked', 'aria-label'].forEach(function (a) { mark.removeAttribute(a); });
+    if (type === 'ol') { mark.className = 'mark num'; return; }   // numbered by renumber()
     if (type !== 'todo') return;
     mark.className = 'mark check';
     mark.setAttribute('role', 'checkbox');
@@ -1117,19 +1214,32 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
 
   function render() {
     if (!doc) return;
+    hideMenu();
     doc.textContent = '';
     const blocks = data && data.blocks && data.blocks.length ? data.blocks : [{ type: 'p', text: '' }];
     blocks.forEach(function (b) { doc.appendChild(makeBlock(b)); });
+    renumber(doc);
     updateLead();
     fitAll();
     dirty = false;
   }
 
+  // A numbered list counts its own run of items and starts again after
+  // anything else.
+  function renumber(container) {
+    let n = 0;
+    Array.prototype.forEach.call(container.children, function (b) {
+      if (!b.classList.contains('block')) return;
+      if (b.dataset.type === 'ol') b.firstChild.textContent = ++n + '.';
+      else n = 0;
+    });
+  }
+
   function serialize() {
     const out = [];
     doc.querySelectorAll('.block').forEach(function (block) {
-      const text = block.lastChild.value;
-      if (!text.trim()) return;
+      const text = block.dataset.type === 'hr' ? '' : block.lastChild.value;
+      if (!text.trim() && block.dataset.type !== 'hr') return;
       const b = { type: block.dataset.type, text: text };
       if (b.type === 'todo' && block.dataset.done === '1') b.done = true;
       out.push(b);
@@ -1141,6 +1251,7 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
   // Scrolled by hand: scrollIntoView could also scroll the page underneath.
   function place(block, at) {
     if (!block) return;
+    hideMenu();
     const ta = block.lastChild;
     try { ta.focus({ preventScroll: true }); } catch (e) { ta.focus(); }
     const p = at === 'end' ? ta.value.length : at;
@@ -1151,10 +1262,13 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
   }
 
   // Markdown as you type, the way Notion does it: "[] " starts a to-do,
-  // "- " a list, "# " a heading. Only at the moment it is typed, with the
-  // caret right after the marker, so a pasted note that happens to begin
-  // with "- " is left as written.
-  const SHORTCUTS = [[/^\[(?: ?|x)\] /i, 'todo'], [/^[-*•] /, 'ul'], [/^#{1,3} /, 'h']];
+  // "- " a list, "# " a heading, and so on. Only at the moment it is typed,
+  // with the caret right after the marker, so a pasted note that happens to
+  // begin with "- " is left as written.
+  const SHORTCUTS = [
+    [/^\[(?: ?|x)\] /i, 'todo'], [/^[-*•] /, 'ul'], [/^\d+[.)] /, 'ol'], [/^#{2,3} /, 'h2'],
+    [/^# /, 'h'], [/^> /, 'quote'], [/^! /, 'callout'], [/^```/, 'code'], [/^---$/, 'hr']
+  ];
 
   function markdown(block, ta) {
     const v = ta.value;
@@ -1162,11 +1276,94 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
       const m = SHORTCUTS[i][0].exec(v);
       if (!m || ta.selectionStart !== m[0].length) continue;
       ta.value = v.slice(m[0].length);
-      setType(block, SHORTCUTS[i][1], /x/i.test(m[0]));
-      ta.setSelectionRange(0, 0);
+      toType(block, SHORTCUTS[i][1], /x/i.test(m[0]));
+      return true;
+    }
+    return false;
+  }
+
+  // Turn a block into another kind. A divider holds no text, so the caret
+  // moves on to a fresh block after it.
+  function toType(block, type, done) {
+    const ta = block.lastChild;
+    setType(block, type, done);
+    renumber(doc);
+    if (type === 'hr') {
+      ta.value = '';
+      const next = makeBlock({ type: 'p', text: '' });
+      block.after(next);
+      fit(next.lastChild);
+      place(next, 0);
       return;
     }
+    fit(ta);
+    try { ta.setSelectionRange(0, 0); } catch (e) {}
   }
+
+  // ---------- the "/" menu ----------
+
+  // Typing "/" at the start of a block opens the menu; what follows filters
+  // it ("/num" leaves Numbered list). Arrows move, Enter picks, Esc closes.
+  function updateMenu(block, ta) {
+    const v = ta.value, s = ta.selectionStart;
+    if (block.dataset.type === 'code' || v[0] !== '/' || s < 1 || s !== ta.selectionEnd || v.slice(0, s).indexOf('\n') !== -1) {
+      hideMenu();
+      return;
+    }
+    const q = v.slice(1, s).trim().toLowerCase();
+    menuItems = FORMATS.filter(function (f) { return !q || f.label.toLowerCase().indexOf(q) !== -1; });
+    if (!menuItems.length || q.length > 24) { hideMenu(); return; }
+    if (q !== menuQuery || menuBlock !== block) menuIndex = 0;
+    menuQuery = q;
+    menuBlock = block;
+    paintMenu();
+    menu.hidden = false;
+    // Just below the block, or above it when the panel runs out of room.
+    const p = panel.getBoundingClientRect(), b = block.getBoundingClientRect();
+    const h = menu.offsetHeight;
+    const below = b.bottom - p.top + 4;
+    menu.style.top = (below + h <= p.height - 8 ? below : Math.max(8, b.top - p.top - h - 4)) + 'px';
+  }
+
+  function paintMenu() {
+    menu.textContent = '';
+    menuItems.forEach(function (f, i) {
+      const item = el('div', 'menu-item');
+      item.dataset.i = String(i);
+      item.setAttribute('role', 'option');
+      item.setAttribute('aria-selected', String(i === menuIndex));
+      item.append(el('span', null, f.label), el('span', 'menu-hint', f.hint));
+      menu.appendChild(item);
+    });
+    const on = menu.children[menuIndex];
+    if (on) {
+      if (on.offsetTop < menu.scrollTop) menu.scrollTop = on.offsetTop - 4;
+      else if (on.offsetTop + on.offsetHeight > menu.scrollTop + menu.clientHeight) menu.scrollTop = on.offsetTop + on.offsetHeight - menu.clientHeight + 4;
+    }
+  }
+
+  function hideMenu() {
+    if (menu) menu.hidden = true;
+    menuBlock = null;
+    menuQuery = '';
+  }
+
+  const menuOpen = function () { return !!menu && !menu.hidden && !!menuBlock; };
+
+  function pickFormat(f) {
+    const block = menuBlock;
+    if (!block || !f) return;
+    const ta = block.lastChild;
+    ta.value = ta.value.slice(ta.selectionStart);   // drop the "/query" that was typed
+    hideMenu();
+    toType(block, f.type, false);
+    if (f.type !== 'hr') place(block, 0);
+    changed(true);
+  }
+
+  // What Enter starts next: lists carry on as lists (1 = continue), and an
+  // empty quote or highlight turns back into text (0) rather than repeating.
+  const CONTINUES = { todo: 1, ul: 1, ol: 1, quote: 0, callout: 0 };
 
   function blockKey(e, ta) {
     const block = ta.parentNode;
@@ -1184,12 +1381,25 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
         return;
       }
       if (e.shiftKey || e.altKey || mod) return;   // Shift+Enter: a line break inside the block
+      // In code, Enter is a new line; Enter on an empty last line leaves the block.
+      if (type === 'code') {
+        if (!(collapsed && s === v.length && v.slice(-1) === '\n')) return;
+        e.preventDefault();
+        ta.value = v.slice(0, -1);
+        fit(ta);
+        const after = makeBlock({ type: 'p', text: '' });
+        block.after(after);
+        fit(after.lastChild);
+        place(after, 0);
+        changed(true);
+        return;
+      }
       e.preventDefault();
       // Enter on an empty list item ends the list, as in every editor.
-      if (!v && (type === 'todo' || type === 'ul')) { setType(block, 'p'); changed(true); return; }
+      if (!v && CONTINUES[type] !== undefined && type !== 'p') { setType(block, 'p'); changed(true); return; }
       ta.value = v.slice(0, s);
       fit(ta);
-      const next = makeBlock({ type: type === 'h' ? 'p' : type, text: v.slice(end) });
+      const next = makeBlock({ type: CONTINUES[type] ? type : 'p', text: v.slice(end) });
       block.after(next);
       fit(next.lastChild);
       place(next, 0);
@@ -1252,6 +1462,7 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
   // all deleted has its entry removed rather than kept as an empty shell.
   function changed(now) {
     dirty = true;
+    renumber(doc);
     updateLead();
     clearTimeout(saveTimer);
     if (now) flush();
@@ -1361,6 +1572,16 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
 
   function onKey(e) {
     if (e.isComposing || e.keyCode === 229) return;   // an IME is mid-word; its Enter picks a candidate
+    if (menuOpen()) {
+      if (e.key === 'Escape') { e.preventDefault(); hideMenu(); return; }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        menuIndex = (menuIndex + (e.key === 'ArrowDown' ? 1 : -1) + menuItems.length) % menuItems.length;
+        paintMenu();
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pickFormat(menuItems[menuIndex]); return; }
+    }
     if (e.key === 'Escape') { e.preventDefault(); close(true); return; }
     if (isToggleKey(e)) { e.preventDefault(); toggle(true); return; }
     const t = shadow.activeElement;
@@ -1370,7 +1591,10 @@ textarea::selection { background: color-mix(in srgb, var(--accent) 32%, transpar
   function onInput() {
     const t = shadow.activeElement;
     if (!t || t.tagName !== 'TEXTAREA') return;
-    if (t.parentNode.dataset.type === 'p') markdown(t.parentNode, t);
+    const block = t.parentNode;
+    if (block.dataset.type === 'hr' && t.value) setType(block, 'p');   // typing on a divider makes it text
+    if (block.dataset.type === 'p') markdown(block, t);
+    if (shadow.activeElement === t) updateMenu(block, t);
     fit(t);
     changed();
   }
