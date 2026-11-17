@@ -1,13 +1,13 @@
 {
-  "name": "Audio Player",
-  "short_name": "Audio",
-  "description": "The queue sent from your computer, playable on your phone.",
+  "name": "BumbleTap Playlist",
+  "short_name": "Playlist",
+  "description": "The playlist sent from your computer, playable on your phone.",
   "start_url": "./mobile-player.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#000000",
-  "theme_color": "#000000",
+  "background_color": "#0E0F13",
+  "theme_color": "#0E0F13",
   "icons": [
     {
       "src": "mobile-icon.svg",

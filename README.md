@@ -117,6 +117,33 @@ seconds.
 Detects audio on any page, collects it into one queue that follows you across
 sites, and hands the whole queue to your phone with a QR code.
 
+## What's new in 3.0
+
+**Page script**
+- **One instance:** running it again (BumbleTap's V) opens and closes its panel, and the panel opens straight away.
+- **Isolation:** it lives in an open shadow root on `<bt-audio>`, so the site's CSS can't reach it.
+- **The pill** sits at the top centre.
+- **BumbleTap integration:**
+  - hears BumbleTap's `afp-intercept` reports;
+  - reads ID3 through BumbleTap's `http()` helper;
+  - titles come from the link's own text, not the page's.
+
+**PC player (`player.html`), now called Playlist**
+- **Look:** redesigned, light and dark. Each track gets a colour and drawn cover art from one of seven tones; the playing track's tone colours the controls.
+- **Failed tracks:** a track that can't play is skipped, with the reason and a Retry.
+- **Reload:** the current track and position come back.
+- **New controls:** back 15s and forward 30s.
+- **Media Session:** full: site, artwork, seek and position.
+
+**Phone player (`mobile-player.html`)**
+- A start screen.
+- Up next visible below the controls.
+- A sleep timer.
+- An error card that auto-skips.
+- A multi-part transfer that can't trap you.
+
+**Phone link v2:** `#v=2&d=<base64url(deflate-raw JSON)>`. It carries the whole queue, the current track and the position. 20 tracks from one host fit in one code instead of five. v1 `#q=` links still open.
+
 ## How it works
 
 1. `audio-float-player.js` runs on a page and finds audio — links, `<audio>`

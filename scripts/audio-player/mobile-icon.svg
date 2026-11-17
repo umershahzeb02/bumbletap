@@ -1,8 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Audio Player">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="BumbleTap Playlist">
   <!-- Maskable: the safe zone is the middle 80%, so the glyph stays well inside
        the edges and survives whatever mask the launcher applies. -->
-  <rect width="512" height="512" fill="#000000"/>
-  <g fill="#0a84ff">
+  <rect width="512" height="512" fill="#0E0F13"/>
+  <g fill="#8B5CF6">
     <path d="M310 128v146.5a58 58 0 1 1-28-49.8V170l-92 20.5v124a58 58 0 1 1-28-49.8V166a16 16 0 0 1 12.6-15.6l124-27.6A16 16 0 0 1 318 138z" opacity="0"/>
   </g>
   <!-- Simple, heavy shapes: an app icon is read small, where thin strokes vanish. -->

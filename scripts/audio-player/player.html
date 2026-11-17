@@ -1,388 +1,542 @@
-<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Audio Player</title>
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Playlist</title>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap');
+/* System fonts only. A web-font @import here once held the whole script back
+   past the page's handshake window and dropped the track being sent. */
 *{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#000;--s1:#1c1c1e;--s2:#2c2c2e;--sep:rgba(255,255,255,.06);--t1:rgba(255,255,255,.9);--t2:rgba(255,255,255,.5);--t3:rgba(255,255,255,.2);--acc:#0a84ff;--acc2:#5ac8fa;--r:12px}
-body{font-family:'DM Sans',-apple-system,BlinkMacSystemFont,sans-serif;background:var(--bg);color:var(--t1);height:100vh;display:flex;flex-direction:column;overflow:hidden;user-select:none;-webkit-font-smoothing:antialiased}
+:root{
+  color-scheme:dark;
+  --bg:#0E0F13;--surface:#17191F;--raised:#1F222A;--line:#2A2E38;--ink:#EEF0F4;--muted:#A3AABA;--faint:#6E7586;
+  --danger:#E5484D;--danger-ink:#FF9EA1;
+  --accent:#F07A2B;--on-accent:#fff;
+  --soft:color-mix(in oklab,var(--accent) 16%,transparent);
+  --accent-ink:color-mix(in oklab,var(--accent) 82%,#fff);
+  --ring:color-mix(in oklab,var(--accent) 55%,var(--ink));
+  --hover:color-mix(in oklab,var(--ink) 7%,transparent);
+  --shadow:0 14px 36px -10px rgba(0,0,0,.7),0 0 0 1px var(--line);
+  --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --t:150ms ease-out;
+}
+@media (prefers-color-scheme:light){:root{
+  color-scheme:light;
+  --bg:#FFFFFF;--surface:#F6F7FA;--raised:#FFFFFF;--line:#E4E7EE;--ink:#0C1222;--muted:#5A6378;--faint:#8A92A6;
+  --danger-ink:#B42328;
+  --accent-ink:color-mix(in oklab,var(--accent) 70%,#000);
+  --shadow:0 14px 36px -12px rgba(12,18,34,.25),0 0 0 1px var(--line);
+}}
+html,body{height:100%}
+body{font:14px/1.4 var(--sans);background:var(--bg);color:var(--ink);display:flex;flex-direction:column;overflow:hidden;user-select:none;-webkit-font-smoothing:antialiased;min-width:300px}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
+button:disabled{cursor:default;opacity:.38}
+:focus-visible{outline:2px solid var(--ring);outline-offset:2px}
+:focus:not(:focus-visible){outline:none}
+svg{display:block;flex-shrink:0}
+.vh{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 
-.head{padding:14px 18px 12px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--sep)}
-.head-title{font-size:14px;font-weight:600;color:var(--t2);flex:1}
-.head-count{font-size:11px;font-weight:700;color:var(--acc2);background:rgba(10,132,255,.1);padding:2px 9px;border-radius:10px}
+/* icon buttons: 40px targets, 10px radius */
+.ib{width:40px;height:40px;border-radius:10px;display:grid;place-items:center;color:var(--muted);position:relative;transition:background var(--t),color var(--t),transform var(--t)}
+.ib:not(:disabled):hover{background:var(--hover);color:var(--ink)}
+.ib:not(:disabled):active{transform:scale(.94)}
+.ib.on{color:var(--accent-ink)}
+.ib.on::after{content:'';position:absolute;bottom:5px;left:50%;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:currentColor}
+.ib .badge{position:absolute;top:8px;right:7px;font:700 8.5px/1 var(--mono)}
 
-.now{padding:16px 18px 12px;display:flex;align-items:center;gap:14px}
-.now-art{width:48px;height:48px;border-radius:12px;background:linear-gradient(135deg,#1a1a2e,#16213e,#0f3460);border:1px solid rgba(255,255,255,.05);display:flex;align-items:center;justify-content:center;color:var(--t3);flex-shrink:0;position:relative;overflow:hidden}
-.now-art.spin{animation:spin 4s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-.now-art svg{width:20px;height:20px}
+/* ---------- header ---------- */
+.top{height:44px;flex-shrink:0;display:flex;align-items:center;gap:8px;padding:0 4px 0 14px}
+.mark{color:var(--accent);display:flex;transition:color var(--t)}
+.brand{flex:1;font-size:14px;font-weight:650;letter-spacing:-.005em}
+.menuwrap{position:relative}
+.menu{position:absolute;top:calc(100% + 4px);right:2px;min-width:200px;padding:6px;border-radius:12px;background:var(--raised);box-shadow:var(--shadow);z-index:40;display:flex;flex-direction:column}
+.menu[hidden]{display:none}
+.mi{display:flex;align-items:center;gap:10px;height:40px;padding:0 10px;border-radius:8px;font-size:13px;text-align:left;color:var(--ink);transition:background var(--t)}
+.mi svg{color:var(--muted)}
+.mi:not(:disabled):hover,.mi:focus-visible{background:var(--hover);outline:none}
+.mi.danger{color:var(--danger-ink)}.mi.danger svg{color:currentColor}
+.msep{height:1px;background:var(--line);margin:5px 4px}
+
+/* ---------- now playing ---------- */
+.now{height:88px;flex-shrink:0;display:flex;align-items:center;gap:14px;padding:4px 16px 8px}
 .now-meta{flex:1;min-width:0}
-.now-title{font-size:14px;font-weight:600;color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.now-src{font-size:10px;color:var(--t3);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:'SF Mono',Menlo,monospace}
+.now-title{font-size:15px;font-weight:600;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.now-src{margin-top:3px;font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.now-src a{color:inherit;text-decoration:none;border-radius:4px}
+.now-src a:hover{color:var(--ink);text-decoration:underline;text-underline-offset:2px}
+.hero{display:none;align-items:center;gap:14px;flex:1;min-width:0}
+.hero p{font-size:14px;line-height:1.4;font-weight:500;text-wrap:pretty}
+body.is-empty .hero{display:flex}
+body.is-empty .now-art,body.is-empty .now-meta{display:none}
+.keycap{width:64px;height:64px;flex-shrink:0;border-radius:12px;display:grid;place-items:center;padding-bottom:4px;
+  font:700 24px/1 var(--mono);color:var(--ink);
+  background:linear-gradient(180deg,var(--raised),var(--surface));
+  box-shadow:inset 0 -5px 0 var(--line),inset 0 0 0 1px var(--line),0 8px 18px -10px rgba(0,0,0,.55)}
 
-.seek-area{padding:8px 18px 2px}
-.seek{width:100%;height:6px;background:var(--s2);border-radius:3px;cursor:pointer;position:relative;transition:height .15s}
-.seek:hover{height:8px}
-.seek-fill{height:100%;background:var(--acc);border-radius:3px;width:0%;pointer-events:none;position:relative}
-.seek-dot{position:absolute;right:-5px;top:50%;transform:translateY(-50%);width:12px;height:12px;border-radius:50%;background:#fff;box-shadow:0 0 6px rgba(0,0,0,.5);opacity:0;transition:opacity .15s;pointer-events:none}
-.seek:hover .seek-dot{opacity:1}
-.seek-times{display:flex;justify-content:space-between;padding:4px 0;font-size:10px;color:var(--t3);font-variant-numeric:tabular-nums;font-weight:500}
+/* generated artwork: the track's tone, a pattern from its URL hash, its initial */
+.art{position:relative;display:grid;place-items:center;flex-shrink:0;overflow:hidden;color:#fff;
+  background:linear-gradient(135deg,var(--tone),color-mix(in oklab,var(--tone) 58%,#000))}
+.art svg{position:absolute;inset:0;width:100%;height:100%}
+.art b{position:relative;color:rgba(255,255,255,.7);font-weight:700;line-height:1}
+.art-64{width:64px;height:64px;border-radius:12px;box-shadow:0 8px 20px -10px color-mix(in oklab,var(--tone) 70%,transparent)}
+.art-64 b{font-size:28px}
+.art-28{width:28px;height:28px;border-radius:7px}
+.art-28 b{font-size:12.5px}
+.art-idle{--tone:var(--raised);color:var(--muted);box-shadow:inset 0 0 0 1px var(--line)}
 
-.ctrls{padding:6px 18px 10px;display:flex;align-items:center;justify-content:center;gap:20px}
-.cb{width:40px;height:40px;border-radius:50%;border:none;background:transparent;color:var(--t2);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .12s}
-.cb:hover{color:var(--t1);background:rgba(255,255,255,.06)}
-.cb:active{transform:scale(.9)}
-.cb-play{width:56px;height:56px;background:var(--acc);color:#fff;box-shadow:0 2px 16px rgba(10,132,255,.3)}
-.cb-play:hover{background:#2e96ff;color:#fff}
-.cb-sm{width:34px;height:34px}
-.cb.active{color:var(--acc2)}
+/* ---------- seek ---------- */
+.seekrow{height:30px;flex-shrink:0;display:flex;align-items:center;gap:10px;padding:0 16px}
+.time{font:500 11.5px/1 var(--mono);font-variant-numeric:tabular-nums;color:var(--muted);min-width:36px}
+#td{text-align:right}
+.seek,.vol{position:relative;flex:1;display:flex;align-items:center;cursor:pointer;touch-action:none;border-radius:6px}
+.seek{height:18px}
+.seek.off{cursor:default}
+.rail{position:relative;width:100%;border-radius:999px;background:var(--line)}
+.seek .rail{height:6px}
+.fill{position:absolute;inset:0 auto 0 0;width:0;border-radius:inherit;background:var(--accent)}
+.thumb{position:absolute;top:50%;left:0;border-radius:50%;pointer-events:none;opacity:0;transform:translate(-50%,-50%) scale(.6);transition:opacity var(--t),transform var(--t)}
+.seek .thumb{width:14px;height:14px;background:var(--accent);box-shadow:0 0 0 3px var(--bg)}
+.seek:not(.off):hover .thumb,.seek:focus-visible .thumb,.seek.drag .thumb,
+.vol:hover .thumb,.vol:focus-visible .thumb,.vol.drag .thumb{opacity:1;transform:translate(-50%,-50%)}
 
-.extras{padding:2px 18px 12px;display:flex;align-items:center;gap:8px}
-.vol-i{display:flex;align-items:center;color:var(--t3);cursor:pointer;width:20px;justify-content:center}
-.vol-i:hover{color:var(--t2)}
-.vol-bar{flex:1;height:3px;background:var(--s2);border-radius:2px;cursor:pointer;position:relative}
-.vol-fill{height:100%;background:rgba(255,255,255,.35);border-radius:2px;width:80%;pointer-events:none}
-.vol-label{font-size:10px;color:var(--t3);min-width:24px;text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
-.speed-btn{font-size:10px;color:var(--t3);background:var(--s1);border:1px solid var(--sep);border-radius:6px;padding:3px 7px;cursor:pointer;font-family:inherit;font-weight:600;transition:all .12s}
-.speed-btn:hover{color:var(--t2);border-color:rgba(255,255,255,.12)}
+/* ---------- transport ---------- */
+.ctrls{height:64px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;padding:0 14px}
+.pp{width:52px;height:52px;border-radius:999px;display:grid;place-items:center;background:var(--accent);color:var(--on-accent);
+  box-shadow:0 10px 22px -10px color-mix(in oklab,var(--accent) 80%,transparent);transition:transform var(--t),filter var(--t),background var(--t)}
+.pp:not(:disabled):hover{filter:brightness(1.07)}
+.pp:disabled{opacity:1;background:var(--raised);color:var(--faint);box-shadow:inset 0 0 0 1px var(--line)}
+.pp:not(:disabled):active{transform:scale(.95)}
+.skip text{font:700 7.5px var(--sans);fill:currentColor;stroke:none}
 
-.add-sec{padding:0 18px 12px}
-.add-row{display:flex;gap:6px}
-.add-input{flex:1;height:34px;background:var(--s1);border:1px solid var(--sep);border-radius:8px;padding:0 10px;font-size:12px;color:var(--t1);font-family:inherit;outline:none;transition:border-color .15s}
-.add-input:focus{border-color:rgba(10,132,255,.4)}
-.add-input::placeholder{color:var(--t3)}
-.add-btn{height:34px;padding:0 14px;background:rgba(10,132,255,.12);border:none;color:var(--acc2);border-radius:8px;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;display:flex;align-items:center;gap:4px;transition:background .12s;flex-shrink:0}
-.add-btn:hover{background:rgba(10,132,255,.22)}
+/* ---------- volume + speed ---------- */
+.extras{height:44px;flex-shrink:0;display:flex;align-items:center;gap:6px;padding:0 14px 4px 8px}
+.vol{height:24px}
+.vol .rail{height:4px}
+.vol .fill{background:var(--muted);transition:background var(--t)}
+.vol:hover .fill,.vol.drag .fill{background:var(--ink)}
+.vol.muted .fill{opacity:.35}
+.vol .thumb{width:12px;height:12px;background:var(--ink);box-shadow:0 0 0 2px var(--bg)}
+.vol-label{font:500 11.5px/1 var(--mono);color:var(--muted);min-width:26px;text-align:right;margin-right:6px}
+.chip{position:relative;height:28px;min-width:48px;padding:0 10px;border-radius:999px;font:600 12px/1 var(--mono);color:var(--ink);background:var(--surface);box-shadow:inset 0 0 0 1px var(--line);transition:background var(--t),box-shadow var(--t)}
+.chip::before{content:'';position:absolute;inset:-6px -2px}
+.chip:hover{background:var(--hover)}
+.chip.on{background:var(--soft);box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--accent) 45%,transparent)}
 
-.q-hdr{padding:10px 18px 8px;font-size:11px;font-weight:600;color:var(--t3);border-top:1px solid var(--sep);display:flex;justify-content:space-between;align-items:center}
-.q-hdr button{background:none;border:none;color:var(--t3);font-size:11px;font-family:inherit;cursor:pointer;display:flex;align-items:center;gap:3px;padding:2px 6px;border-radius:4px;transition:all .1s}
-.q-hdr button:hover{color:var(--t2);background:rgba(255,255,255,.04)}
-.q{flex:1;overflow-y:auto;min-height:0;overscroll-behavior:contain}
-.q::-webkit-scrollbar{width:0}
-.qi{display:flex;align-items:center;gap:10px;padding:9px 18px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.02);transition:background .08s;position:relative}
-.qi:hover{background:rgba(255,255,255,.035)}
-.qi.on{background:rgba(10,132,255,.06)}
-.qi.on::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--acc)}
-.qi.dragging{opacity:.35}
-.qi.dragover{box-shadow:inset 0 2px 0 var(--acc)}
-.qi.dead{opacity:.45}
+/* ---------- error banner ---------- */
+.banner{display:none;flex-shrink:0;gap:10px;align-items:flex-start;margin:0 12px 8px;padding:8px 2px 8px 12px;border-radius:12px;
+  background:color-mix(in oklab,var(--danger) 12%,var(--surface));box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--danger) 32%,transparent)}
+.banner.show{display:flex;animation:rise 150ms ease-out}
+.banner-ico{color:var(--danger);margin-top:1px}
+.banner-body{flex:1;min-width:0}
+.banner p{font-size:12.5px;line-height:1.42;user-select:text;overflow-wrap:anywhere}
+.banner-acts{display:flex;gap:6px;margin-top:6px}
+.banner-acts:empty{display:none}
+.banner .ib{width:32px;height:32px;margin-top:-5px;border-radius:8px}
+.btn-s{height:28px;padding:0 12px;border-radius:8px;font-size:12.5px;font-weight:600;background:var(--raised);box-shadow:inset 0 0 0 1px var(--line);transition:background var(--t)}
+.btn-s:hover{background:var(--hover)}
+.banner.busy .banner-ico{color:var(--muted)}
 
-/* index / equalizer slot — fixed width so rows never shift */
-.qi-n{font-size:11px;color:var(--t3);width:18px;text-align:center;font-variant-numeric:tabular-nums;font-weight:500;flex-shrink:0;display:flex;align-items:center;justify-content:center;height:14px}
-.qi.on .qi-n{color:var(--acc)}
-.eq{display:flex;align-items:flex-end;gap:1.5px;height:11px}
-.eq i{width:2px;background:var(--acc);border-radius:1px;animation:eqb .9s ease-in-out infinite}
-.eq i:nth-child(2){animation-delay:.3s}
-.eq i:nth-child(3){animation-delay:.6s}
-@keyframes eqb{0%,100%{height:3px}50%{height:11px}}
-.qi.paused .eq i{animation-play-state:paused}
+/* ---------- queue ---------- */
+.queue{flex:1;min-height:0;display:flex;flex-direction:column;background:var(--surface);border-radius:16px 16px 0 0}
+.qhead{height:44px;flex-shrink:0;display:flex;align-items:center;gap:6px;padding:0 6px 0 16px}
+.qtitle{flex:1;font-size:13px;font-weight:600}
+.qtitle .n{color:var(--muted);font:500 12px var(--mono);margin-left:2px}
+.qfilter{flex:1;display:none}
+.qhead.filtering .qtitle{display:none}
+.qhead.filtering .qfilter{display:block}
+.field{width:100%;min-width:0;height:40px;border-radius:10px;border:1px solid var(--line);background:var(--raised);color:var(--ink);font:13px var(--sans);padding:0 12px;outline:none;user-select:text;transition:border-color var(--t),box-shadow var(--t)}
+.field::placeholder{color:var(--muted)}
+.field:focus{border-color:var(--ring);box-shadow:0 0 0 3px var(--soft)}
+.qfilter .field{height:32px;margin-left:-6px}
+.addrow{flex-shrink:0;display:flex;gap:8px;padding:0 12px 10px}
+.btn{height:40px;padding:0 16px;flex-shrink:0;border-radius:10px;font-size:13px;font-weight:600;background:var(--accent);color:var(--on-accent);transition:filter var(--t),background var(--t),color var(--t)}
+.btn:not(:disabled):hover{filter:brightness(1.07)}
+.btn:disabled{opacity:1;background:var(--raised);color:var(--muted);box-shadow:inset 0 0 0 1px var(--line)}
+.q{flex:1;min-height:0;overflow-y:auto;padding:0 6px 10px;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+.qempty{padding:22px 16px;text-align:center;font-size:12.5px;color:var(--muted)}
 
-.qi-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
-.qi-name{font-size:12px;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
-.qi.on .qi-name{color:var(--t1);font-weight:600}
-.qi-sub{font-size:9.5px;color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:5px}
-.qi-site{display:inline-flex;align-items:center;gap:4px;flex-shrink:0;max-width:46%}
-.qi-site-ico{width:11px;height:11px;border-radius:3px;flex-shrink:0;display:flex;align-items:center;
-  justify-content:center;font-size:7.5px;font-weight:700;color:#fff;text-transform:uppercase;line-height:1}
-.qi-site-ico img{width:11px;height:11px;border-radius:3px;display:block}
-.qi-site-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:var(--t2)}
-.qi-path{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,monospace;opacity:.75}
-.qi-dur{font-size:10.5px;color:var(--t3);font-variant-numeric:tabular-nums;flex-shrink:0;min-width:34px;text-align:right}
-.qi-badge{font-size:8.5px;color:#ff6b6b;background:rgba(255,82,82,.1);padding:1px 5px;border-radius:4px;font-weight:600;flex-shrink:0}
+.qi{display:flex;align-items:center;gap:4px;height:48px;padding:0 4px 0 6px;border-radius:10px;position:relative;transition:background var(--t)}
+.qi:hover{background:var(--hover)}
+.qi.on{background:var(--soft)}
+.qi-main{flex:1;min-width:0;height:100%;display:flex;align-items:center;gap:10px;padding-left:4px;border-radius:8px;cursor:pointer}
+.qi-text{flex:1;min-width:0}
+.qi-title{display:block;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.qi.on .qi-title{font-weight:650}
+.qi-sub{display:block;font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+.qi-sub .d{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.tag{display:inline-block;font-size:10.5px;font-weight:650;line-height:16px;padding:0 6px;border-radius:999px;color:var(--danger-ink);background:color-mix(in oklab,var(--danger) 15%,transparent);vertical-align:1px;margin-right:4px}
+.qi.dead .art{filter:grayscale(.9);opacity:.55}
+.qi.dead .qi-title{color:var(--muted)}
+.qi-acts{display:flex;align-items:center;gap:2px;opacity:0;transition:opacity var(--t)}
+.qi:hover .qi-acts,.qi:focus-within .qi-acts{opacity:1}
+.qi-acts .ib{width:36px;height:40px}
+.qi-acts .ib.busy{opacity:.45;pointer-events:none}
+.qi-acts .rm:hover{color:var(--danger-ink);background:color-mix(in oklab,var(--danger) 12%,transparent)}
+.retry{height:28px;padding:0 10px;border-radius:8px;font-size:12px;font-weight:600;background:var(--raised);box-shadow:inset 0 0 0 1px var(--line)}
+.retry:hover{background:var(--hover)}
+.qi.dragging{opacity:.4}
+.qi.dragover{box-shadow:inset 0 2px 0 var(--accent)}
+.eq{position:absolute;inset:0;display:flex;align-items:flex-end;justify-content:center;gap:2px;padding-bottom:7px;background:rgba(0,0,0,.25)}
+.eq i{width:3px;height:13px;border-radius:1px;background:#fff;transform-origin:bottom;transform:scaleY(.45);animation:eq .9s ease-in-out infinite;animation-play-state:paused}
+.eq i:nth-child(2){animation-delay:-.3s}.eq i:nth-child(3){animation-delay:-.6s}
+body.is-playing .qi.on .eq i{animation-play-state:running}
+@keyframes eq{0%,100%{transform:scaleY(.3)}50%{transform:scaleY(1)}}
+.qi.on .art b{visibility:hidden}
 
-/* hover-revealed actions; reserve the space so hovering doesn't reflow */
-.qi-acts{display:flex;gap:2px;flex-shrink:0;width:56px;justify-content:flex-end}
-.qi-act{width:22px;height:22px;border-radius:5px;border:none;background:none;color:transparent;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:background .1s,color .1s;padding:0}
-.qi:hover .qi-act{color:var(--t3)}
-.qi-act:hover{background:rgba(255,255,255,.07);color:var(--t1)}
-.qi-act.rm:hover{background:rgba(255,82,82,.1);color:#ff5252}
-.qi-act.busy{color:var(--acc)!important;animation:pulse .8s ease-in-out infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+/* ---------- toast ---------- */
+.toasts{position:fixed;left:12px;right:12px;bottom:12px;display:flex;justify-content:center;pointer-events:none;z-index:70}
+.toast{pointer-events:auto;display:flex;align-items:center;gap:8px;max-width:100%;min-height:40px;padding:6px 6px 6px 14px;border-radius:10px;background:var(--raised);font-size:12.5px;box-shadow:var(--shadow);animation:rise 150ms ease-out}
+.toast:not(:has(button)){padding-right:14px}
+.toast button{height:28px;padding:0 10px;border-radius:8px;font-weight:650;color:var(--accent-ink)}
+.toast button:hover{background:var(--hover)}
+@keyframes rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 
-.q-filter{padding:0 18px 8px}
-.q-filter input{width:100%;background:var(--s1);border:1px solid var(--sep);border-radius:8px;padding:7px 10px;
-  color:var(--t1);font-size:11.5px;font-family:inherit;outline:none}
-.q-filter input:focus{border-color:rgba(10,132,255,.4)}
-.q-filter input::placeholder{color:var(--t3)}
-
-.empty{padding:28px;text-align:center;font-size:13px;color:var(--t3);line-height:1.7}
-.empty b{display:block;color:var(--t2);font-size:13px;margin-bottom:6px;font-weight:600}
-.empty kbd{background:var(--s2);border:1px solid var(--sep);border-radius:4px;padding:1px 5px;font-size:10px;font-family:ui-monospace,monospace;color:var(--t2)}
-.err{padding:6px 18px;font-size:11px;color:#ff6b6b;text-align:center;display:none;font-weight:500}
-.err.show{display:block}
-
-.q-actions{padding:4px 18px 8px;display:flex;gap:5px;flex-wrap:wrap}
-.qa{height:28px;padding:0 10px;background:var(--s1);border:1px solid var(--sep);border-radius:7px;font-size:10px;font-weight:600;font-family:inherit;color:var(--t3);cursor:pointer;display:flex;align-items:center;gap:4px;transition:all .12s;white-space:nowrap}
-.qa:hover{color:var(--t2);border-color:rgba(255,255,255,.1);background:rgba(255,255,255,.04)}
-.qa:active{transform:scale(.96)}
-.qa-primary{background:rgba(10,132,255,.08);border-color:rgba(10,132,255,.12);color:var(--acc2)}
-.qa-primary:hover{background:rgba(10,132,255,.16)}
-.qa-toast{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);background:var(--s2);border:1px solid var(--sep);border-radius:8px;padding:7px 14px;font-size:11px;color:var(--t2);display:flex;align-items:center;gap:6px;z-index:10;animation:qtoast .25s ease;box-shadow:0 4px 16px rgba(0,0,0,.4)}
-@keyframes qtoast{from{opacity:0;transform:translateX(-50%) translateY(4px)}to{opacity:1;transform:translateX(-50%)}}
-.file-hidden{display:none}
-
-/* ===== SEND TO PHONE ===== */
-.sheet{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.72);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);display:none;flex-direction:column;align-items:center;justify-content:center;padding:22px;animation:sheetIn .22s ease}
-.sheet.show{display:flex}
-@keyframes sheetIn{from{opacity:0}to{opacity:1}}
-.sheet-close{position:absolute;top:14px;right:14px;width:30px;height:30px;border-radius:50%;border:none;background:var(--s2);color:var(--t3);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .12s}
-.sheet-close:hover{color:var(--t1);background:#3a3a3c}
-.sheet-title{font-size:15px;font-weight:700;color:var(--t1);margin-bottom:3px;letter-spacing:-.01em}
-.sheet-sub{font-size:11px;color:var(--t3);margin-bottom:18px;text-align:center;line-height:1.55;max-width:260px}
-.qr-frame{background:#fff;border-radius:14px;padding:12px;line-height:0;box-shadow:0 8px 32px rgba(0,0,0,.5)}
-.qr-frame canvas{display:block!important;border-radius:4px}
-.qr-frame img{display:none!important}
-.sheet-code{margin-top:16px;font-family:'SF Mono',Menlo,monospace;font-size:16px;font-weight:700;color:var(--acc2);letter-spacing:.14em;background:rgba(10,132,255,.1);border-radius:8px;padding:7px 16px;cursor:pointer;user-select:all}
-.sheet-mode{margin-top:14px;font-size:10px;color:var(--t3);display:flex;align-items:center;gap:6px}
-.sheet-dot{width:6px;height:6px;border-radius:50%;background:#30d158}
-.sheet-dot.wait{background:#ff9f0a;animation:blink 1.2s ease infinite}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
-.sheet-btn{margin-top:16px;height:32px;padding:0 16px;background:var(--s2);border:1px solid var(--sep);border-radius:8px;color:var(--t2);font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;transition:all .12s}
-.sheet-btn:hover{color:var(--t1);border-color:rgba(255,255,255,.14)}
-.sheet-warn{margin-top:12px;font-size:10px;color:#ff9f0a;text-align:center;max-width:250px;line-height:1.5}
-.sheet-nav{margin-top:16px;display:none;align-items:center;gap:14px}
+/* ---------- send to phone ---------- */
+.sheet{position:fixed;inset:0;z-index:50;background:var(--bg);display:none;flex-direction:column;align-items:center;padding:0 20px 18px;overflow-y:auto}
+.sheet.show{display:flex;animation:fade 150ms ease-out}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+.sheet-top{align-self:stretch;height:44px;flex-shrink:0;display:flex;align-items:center;gap:8px;margin:0 -16px 0 -6px}
+.sheet-title{flex:1;font-size:14px;font-weight:650}
+.sheet-sub{font-size:12.5px;line-height:1.45;color:var(--muted);text-align:center;max-width:310px;margin:0 0 14px;text-wrap:balance}
+.qr{background:#fff;border-radius:14px;padding:8px;line-height:0;box-shadow:0 0 0 1px var(--line),0 14px 30px -16px rgba(0,0,0,.6);min-width:140px;min-height:140px;display:grid;place-items:center}
+.qr canvas{display:block;image-rendering:pixelated}
+.qr-msg{line-height:1.5;padding:28px 18px;font-size:12.5px;color:#4A5160;text-align:center;max-width:220px}
+.sheet-nav{display:none;align-items:center;gap:4px;margin-top:12px}
 .sheet-nav.show{display:flex}
-.sheet-navbtn{height:34px;min-width:74px;padding:0 16px;background:var(--acc);border:none;border-radius:9px;color:#fff;font-size:12px;font-weight:700;font-family:inherit;cursor:pointer;transition:opacity .12s,transform .1s}
-.sheet-navbtn:active{transform:scale(.95)}
-.sheet-navbtn:disabled{opacity:.3;cursor:default}
-.sheet-navlbl{font-family:'SF Mono',Menlo,monospace;font-size:13px;font-weight:700;color:var(--t2);min-width:54px;text-align:center;letter-spacing:.06em}
+.navlbl{font:600 12.5px/1 var(--mono);min-width:92px;text-align:center}
+.cyc{display:flex;align-items:center;gap:6px;height:32px;padding:0 12px 0 10px;margin-left:6px;border-radius:999px;font-size:12.5px;font-weight:600;background:var(--surface);box-shadow:inset 0 0 0 1px var(--line);transition:background var(--t)}
+.cyc:hover{background:var(--hover)}
+.cyc.on{background:var(--soft);box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--accent) 45%,transparent)}
+.sheet-meta{margin-top:10px;font-size:12px;color:var(--muted);text-align:center;max-width:310px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sheet-copy{margin-top:12px;height:36px;padding:0 14px;border-radius:10px;font-size:12.5px;font-weight:600;background:var(--surface);box-shadow:inset 0 0 0 1px var(--line);transition:background var(--t)}
+.sheet-copy:hover{background:var(--hover)}
+.sheet-warn{margin-top:10px;font-size:12px;line-height:1.45;color:var(--danger-ink);text-align:center;max-width:300px}
+
+/* a window that lost the singleton election only forwards, then closes */
+.relay{position:fixed;inset:0;z-index:90;display:none;place-items:center;background:var(--bg);color:var(--muted);font-size:13px}
+body.relaying .relay{display:grid}
+
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:1ms!important;animation-iteration-count:1!important;transition:none!important}}
 </style></head><body>
 
-<div class="head">
-  <span style="display:flex;align-items:center;color:var(--t3)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></span>
-  <span class="head-title">Audio Player</span>
-  <span class="head-count" id="hc">0</span>
-</div>
-
-<div class="now">
-  <div class="now-art" id="nart"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
-  <div class="now-meta">
-    <div class="now-title" id="nt">No track loaded</div>
-    <div class="now-src" id="ns">Add audio from any page</div>
+<header class="top">
+  <span class="mark" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></span>
+  <h1 class="brand">Playlist</h1>
+  <button class="ib" id="qphone" aria-label="Send to phone" title="Send to phone"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg></button>
+  <div class="menuwrap">
+    <button class="ib" id="menubtn" aria-label="More actions" title="More actions" aria-haspopup="menu" aria-expanded="false" aria-controls="menu"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg></button>
+    <div class="menu" id="menu" role="menu" aria-label="Queue actions" hidden>
+      <button class="mi" role="menuitem" id="qexjson"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>Export JSON</button>
+      <button class="mi" role="menuitem" id="qexm3u"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 15h6M9 11h2"/></svg>Export M3U</button>
+      <button class="mi" role="menuitem" id="qcopy"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy links</button>
+      <button class="mi" role="menuitem" id="qimport"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></svg>Import…</button>
+      <div class="msep" role="separator"></div>
+      <button class="mi danger" role="menuitem" id="qclr"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>Clear queue</button>
+    </div>
   </div>
-</div>
+</header>
 
-<div class="seek-area">
-  <div class="seek" id="seek"><div class="seek-fill" id="sf"><div class="seek-dot"></div></div></div>
-  <div class="seek-times"><span id="tc">0:00</span><span id="td">--:--</span></div>
+<section class="now" aria-label="Now playing">
+  <div class="now-art" id="nart"></div>
+  <div class="now-meta">
+    <div class="now-title" id="nt"></div>
+    <div class="now-src" id="ns"></div>
+  </div>
+  <div class="hero" id="hero"><span class="keycap" aria-hidden="true">V</span><p>Press V on any page with audio to add it to your playlist.</p></div>
+</section>
+
+<div class="seekrow">
+  <span class="time" id="tc">0:00</span>
+  <div class="seek off" id="seek" role="slider" tabindex="0" aria-label="Seek" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+    <div class="rail"><div class="fill" id="sf"></div></div><div class="thumb" id="sthumb"></div>
+  </div>
+  <span class="time" id="td">--:--</span>
 </div>
 
 <div class="ctrls">
-  <button class="cb cb-sm" id="shuf" title="Shuffle"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg></button>
-  <button class="cb" id="prev" title="Previous"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="5" width="3" height="14" rx="1"/><path d="M21 5v14l-10-7 10-7z"/></svg></button>
-  <button class="cb cb-play" id="pp" title="Play"><svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.14v14l11-7-11-7z"/></svg></button>
-  <button class="cb" id="next" title="Next"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="18" y="5" width="3" height="14" rx="1"/><path d="M3 5v14l10-7L3 5z"/></svg></button>
-  <button class="cb cb-sm" id="lp" title="Loop"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></button>
+  <button class="ib" id="shuf" aria-label="Shuffle" title="Shuffle" aria-pressed="false"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5"/><path d="M4 20 21 3"/><path d="M21 16v5h-5"/><path d="m15 15 6 6"/><path d="M4 4l5 5"/></svg></button>
+  <button class="ib skip" id="back" aria-label="Back 15 seconds" title="Back 15 seconds"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1"/><path d="M3.5 3.8v4.6h4.6"/><text x="12.6" y="15.3" text-anchor="middle">15</text></svg></button>
+  <button class="ib" id="prev" aria-label="Previous track" title="Previous track"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 19.5 9 12l10-7.5z" fill="currentColor"/><path d="M5 5v14"/></svg></button>
+  <button class="pp" id="pp" aria-label="Play" title="Play (Space)"></button>
+  <button class="ib" id="next" aria-label="Next track" title="Next track"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5 15 12 5 19.5z" fill="currentColor"/><path d="M19 5v14"/></svg></button>
+  <button class="ib skip" id="fwd" aria-label="Forward 30 seconds" title="Forward 30 seconds"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 12a8.5 8.5 0 1 1-2.6-6.1"/><path d="M20.5 3.8v4.6h-4.6"/><text x="11.4" y="15.3" text-anchor="middle">30</text></svg></button>
+  <button class="ib" id="lp" aria-label="Repeat: off" title="Repeat"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg><span class="badge" id="lp1" hidden>1</span></button>
 </div>
 
 <div class="extras">
-  <span class="vol-i" id="vi"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg></span>
-  <div class="vol-bar" id="vb"><div class="vol-fill" id="vf"></div></div>
-  <span class="vol-label" id="vl">80</span>
-  <button class="speed-btn" id="spd">1×</button>
-</div>
-
-<div class="add-sec">
-  <div class="add-row">
-    <input class="add-input" id="urlin" placeholder="Paste audio URL..." spellcheck="false">
-    <button class="add-btn" id="addbtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add</button>
+  <button class="ib" id="vi" aria-label="Mute" title="Mute"></button>
+  <div class="vol" id="vb" role="slider" tabindex="0" aria-label="Volume" aria-valuemin="0" aria-valuemax="100" aria-valuenow="80">
+    <div class="rail"><div class="fill" id="vf"></div></div><div class="thumb" id="vthumb"></div>
   </div>
+  <span class="vol-label" id="vl" aria-hidden="true">80</span>
+  <button class="chip" id="spd" aria-label="Playback speed 1×" title="Playback speed">1×</button>
 </div>
 
-<div class="err" id="err"></div>
-
-<div class="q-hdr">
-  <span>Queue · <span id="qc">0</span></span>
-  <button id="qclr"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> Clear</button>
-</div>
-<div class="q-actions">
-  <button class="qa qa-primary" id="qexjson">
-    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-    Export JSON
-  </button>
-  <button class="qa" id="qexm3u">
-    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-    Export M3U
-  </button>
-  <button class="qa" id="qcopy">
-    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-    Copy URLs
-  </button>
-  <button class="qa" id="qimport">
-    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-    Import
-  </button>
-  <button class="qa qa-primary" id="qphone"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2.5"/><line x1="10.5" y1="18.5" x2="13.5" y2="18.5"/></svg> Send to Phone</button>
+<div class="banner" id="errbar" role="status" aria-live="polite">
+  <svg class="banner-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="M12 7.5v5.5"/><path d="M12 16.5h.01"/></svg>
+  <div class="banner-body"><p id="err"></p><div class="banner-acts" id="erracts"></div></div>
+  <button class="ib" id="errx" aria-label="Dismiss" title="Dismiss"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
 </div>
 
-<div class="sheet" id="sheet">
-  <button class="sheet-close" id="sheetx"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-  <div class="sheet-title">Send to Phone</div>
-  <div class="sheet-sub" id="sheetsub">Scan with your phone camera</div>
-  <div class="qr-frame" id="qrbox"></div>
-  <div class="sheet-mode"><span class="sheet-dot" id="sheetdot"></span><span id="sheetmode">Ready</span></div>
+<section class="queue" aria-label="Queue">
+  <div class="qhead" id="qhead">
+    <h2 class="qtitle">Up next <span class="n">· <span id="qc">0</span></span></h2>
+    <div class="qfilter"><input class="field" type="search" id="qfilter" placeholder="Filter by title or site" aria-label="Filter the queue" autocomplete="off" spellcheck="false"></div>
+    <button class="ib" id="qfbtn" aria-label="Filter the queue" title="Filter (/)" aria-expanded="false"></button>
+  </div>
+  <div class="addrow">
+    <input class="field" id="urlin" type="url" inputmode="url" placeholder="Paste an audio link" aria-label="Audio link" autocomplete="off" spellcheck="false">
+    <button class="btn" id="addbtn" disabled>Add</button>
+  </div>
+  <div class="q" id="q" role="list" aria-label="Tracks"></div>
+</section>
+
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheettitle">
+  <div class="sheet-top">
+    <h2 class="sheet-title" id="sheettitle">Send to phone</h2>
+    <button class="ib" id="sheetx" aria-label="Close" title="Close (Esc)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+  <p class="sheet-sub" id="sheetsub">Point your phone’s camera at the code.</p>
+  <div class="qr" id="qrbox"></div>
   <div class="sheet-nav" id="sheetnav">
-    <button class="sheet-navbtn" id="sheetprev" aria-label="Previous code">‹ Prev</button>
-    <span class="sheet-navlbl" id="sheetnavlbl">1 / 1</span>
-    <button class="sheet-navbtn" id="sheetnext" aria-label="Next code">Next ›</button>
-    <button class="sheet-navbtn" id="sheetauto" aria-label="Pause or resume cycling">Auto</button>
+    <button class="ib" id="sheetprev" aria-label="Previous code" title="Previous code (←)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></button>
+    <span class="navlbl" id="sheetnavlbl" aria-live="polite">Code 1 of 1</span>
+    <button class="ib" id="sheetnext" aria-label="Next code" title="Next code (→)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></button>
+    <button class="cyc" id="sheetauto" aria-pressed="false"></button>
   </div>
-  <button class="sheet-btn" id="sheetcopy">Copy link instead</button>
-  <div class="sheet-warn" id="sheetwarn" style="display:none"></div>
+  <p class="sheet-meta" id="sheetmode"></p>
+  <button class="sheet-copy" id="sheetcopy">Copy link instead</button>
+  <p class="sheet-warn" id="sheetwarn" hidden></p>
 </div>
-<input type="file" class="file-hidden" id="qfile" accept=".json,.m3u,.m3u8,.txt">
-<div class="q-filter" id="qfilterwrap" style="display:none">
-  <input type="text" id="qfilter" placeholder="Filter queue…" autocomplete="off" spellcheck="false">
-</div>
-<div class="q" id="q"><div class="empty">No tracks in queue</div></div>
+
+<div class="relay" aria-live="polite"><p>Sending to your open player…</p></div>
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+<input type="file" id="qfile" accept=".json,.m3u,.m3u8,.txt" hidden>
 
 <script>
 /* ===== RECLAIM OUR OWN NAME =====
-   This is what made every add open a new window.
-
    The page opens us with window.open('', '__afp_player'), which names the blank
-   window, then navigates it here. That navigation is CROSS-ORIGIN — the page is
-   some other site, we are on the player origin — and Chrome resets
-   window.name on cross-origin navigation (a privacy change in Chrome 88, so
-   names cannot leak across origins).
-
-   So by the time this document exists, the name the page gave the window has
-   already been wiped. The next page asks for '__afp_player', finds nothing, and
-   opens another window. Forever.
-
-   The reset is not a lock: the document that lands there can set the name
-   again. Doing so immediately makes this window findable by name from any page,
-   which is the whole reclaim mechanism. */
+   window, then navigates it here. That navigation is cross-origin, and Chrome
+   resets window.name on cross-origin navigation (Chrome 88), so by the time
+   this document exists the name is gone and the next page would open another
+   window. The document that lands there can set the name again, and doing it
+   first makes this window findable by name from any page. */
 try { window.name = '__afp_player'; } catch (_) {}
 
-const queue=[];let idx=-1,audio=null,playing=false,looping=false,shuffling=false;
-const speeds=[.5,.75,1,1.25,1.5,2];let si=2;
-let vol=.8,muted=false;
-// Playback preferences survive a track change AND a reload — volume, speed, loop
-// and shuffle used to reset to their defaults on every new track.
-(function loadPrefs(){try{const p=JSON.parse(localStorage.getItem('__afp_prefs')||'null');if(!p)return;
-  if(typeof p.vol==='number')vol=Math.max(0,Math.min(1,p.vol));
-  if(typeof p.muted==='boolean')muted=p.muted;
-  if(Number.isInteger(p.si)&&p.si>=0&&p.si<speeds.length)si=p.si;
-  if(typeof p.looping==='boolean')looping=p.looping;
-  if(typeof p.shuffling==='boolean')shuffling=p.shuffling;
-}catch(_){}})();
-function savePrefs(){try{localStorage.setItem('__afp_prefs',JSON.stringify({vol,muted,si,looping,shuffling}))}catch(_){}}
-const $=id=>document.getElementById(id);
-const fmt=s=>{if(!isFinite(s))return'--:--';const m=Math.floor(s/60),sc=Math.floor(s%60);return m+':'+(sc<10?'0':'')+sc};
-const playIcon='<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.14v14l11-7-11-7z"/></svg>';
-const pauseIcon='<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>';
+const $ = id => document.getElementById(id);
+const clamp01 = v => Math.max(0, Math.min(1, v));
+
+/* ===== STATE ===== */
+const queue = []; let idx = -1, audio = null, playing = false, shuffling = false, repeatMode = 0;   // repeat: 0 off, 1 all, 2 one
+const SPEEDS = [.5, .75, 1, 1.25, 1.5, 2]; let rate = 1;
+let vol = .8, muted = false;
+// Playback preferences survive a track change and a reload.
+(function loadPrefs() { try {
+  const p = JSON.parse(localStorage.getItem('__afp_prefs') || 'null'); if (!p) return;
+  if (typeof p.vol === 'number') vol = clamp01(p.vol);
+  if (typeof p.muted === 'boolean') muted = p.muted;
+  if (SPEEDS.includes(p.rate)) rate = p.rate;
+  else if (Number.isInteger(p.si)) {                       // 2.x stored an index into [.5,.75,1,1.25,1.5,2]
+    const old = [.5, .75, 1, 1.25, 1.5, 2][p.si];
+    if (old) rate = SPEEDS.reduce((a, b) => Math.abs(b - old) < Math.abs(a - old) ? b : a);
+  }
+  if (Number.isInteger(p.repeat) && p.repeat >= 0 && p.repeat <= 2) repeatMode = p.repeat;
+  else if (p.looping === true) repeatMode = 2;
+  if (typeof p.shuffling === 'boolean') shuffling = p.shuffling;
+} catch (_) {} })();
+function savePrefs() { try { localStorage.setItem('__afp_prefs', JSON.stringify({ vol, muted, rate, repeat: repeatMode, shuffling })); } catch (_) {} }
+
+const fmt = s => {
+  if (!isFinite(s) || s < 0) return '--:--';
+  s = Math.floor(s); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, sc = s % 60;
+  return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(sc).padStart(2, '0');
+};
+const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const shortTitle = s => { s = String(s || ''); return s.length > 60 ? s.slice(0, 58).trimEnd() + '…' : s; };
+
+/* ===== ICONS (inline stroke SVG, currentColor) ===== */
+const svg = (w, body, extra) => '<svg width="' + w + '" height="' + w + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"' + (extra || '') + '>' + body + '</svg>';
+const ICONS = {
+  play: '<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M8.5 5.6v12.8a1 1 0 0 0 1.53.85l10.2-6.4a1 1 0 0 0 0-1.7l-10.2-6.4A1 1 0 0 0 8.5 5.6z"/></svg>',
+  pause: '<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><rect x="6.5" y="5" width="4" height="14" rx="1.2"/><rect x="13.5" y="5" width="4" height="14" rx="1.2"/></svg>',
+  note: svg(26, '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>'),
+  vol: svg(20, '<path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/>'),
+  volLow: svg(20, '<path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/>'),
+  volOff: svg(20, '<path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="m22 9-6 6"/><path d="m16 9 6 6"/>'),
+  filter: svg(18, '<path d="M4 6h16"/><path d="M7 12h10"/><path d="M10 18h4"/>'),
+  x: svg(16, '<path d="M18 6 6 18M6 6l12 12"/>', ' stroke-width="2"'),
+  dl: svg(17, '<path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/>'),
+  cycle: svg(14, '<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/>', ' stroke-width="2.2"'),
+  pauseS: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>',
+};
+
+/* ===== TRACK TONE + GENERATED ARTWORK =====
+   No real cover art exists, so each track gets one of the site's seven tones,
+   picked by a stable hash of its URL, plus a faint pattern from the same hash
+   and its initial. The current track's tone becomes the accent. */
+const TONES = ['#F07A2B', '#E5484D', '#2FA86A', '#3D7BF0', '#8B5CF6', '#E64C9A', '#E8B425'];
+const DEFAULT_TONE = TONES[0];
+function hashStr(s) { let h = 0x811c9dc5; s = String(s); for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); } return h >>> 0; }
+const toneOf = t => TONES[hashStr(t.url) % TONES.length];
+// Skip series prefixes ("Ep. 12:", "Lecture 1:", "#4 –") so a series doesn't all read "E".
+const SERIES_PREFIX = /^\s*(?:(?:ep(?:isode)?|e|ch(?:apter)?|part|pt|lecture|lesson|track|no|vol(?:ume)?|session|season|s)\.?\s*#?\d+[a-z]?|#\d+)\s*[:.\-–—|)]*\s*/i;
+function initialOf(t) { const s = String(t.title || ''), rest = s.replace(SERIES_PREFIX, ''); const m = (rest || s).match(/[\p{L}\p{N}]/u); return m ? m[0].toUpperCase() : '♪'; }
+function patternOf(h) {           // geometry on a 100×100 box, shared by the SVG and canvas versions
+  if ((h >>> 5) & 1) return { kind: 'rings', cx: (h >>> 6) & 1 ? 100 : 0, cy: (h >>> 7) & 1 ? 100 : 0, step: 13 + ((h >>> 8) % 7) };
+  const bars = []; for (let i = 0; i < 6; i++) bars.push(20 + ((h >>> (9 + i * 3)) & 7) * 8);
+  return { kind: 'bars', bars };
+}
+function patternSVG(p) {
+  if (p.kind === 'rings') { let s = ''; for (let r = p.step; r < 145; r += p.step) s += '<circle cx="' + p.cx + '" cy="' + p.cy + '" r="' + r + '"/>'; return '<g fill="none" stroke="#fff" stroke-opacity=".17" stroke-width="3.2">' + s + '</g>'; }
+  return '<g fill="#fff" fill-opacity=".14">' + p.bars.map((b, i) => '<rect x="' + (7 + i * 15.5) + '" y="' + (100 - b) + '" width="9.5" height="' + (b + 4) + '" rx="3"/>').join('') + '</g>';
+}
+function artHTML(t, cls, inner) {
+  const h = hashStr(t.url);
+  return '<span class="art ' + cls + '" style="--tone:' + TONES[h % TONES.length] + '" aria-hidden="true"><svg viewBox="0 0 100 100" preserveAspectRatio="none">' + patternSVG(patternOf(h)) + '</svg><b>' + esc(initialOf(t)) + '</b>' + (inner || '') + '</span>';
+}
+// Canvas twin for Media Session, which needs image URLs.
+const artCache = new Map();
+function artDataURL(t, size) {
+  const key = t.url + '\n' + t.title + '\n' + size;
+  if (artCache.has(key)) return artCache.get(key);
+  let url = '';
+  try {
+    const c = document.createElement('canvas'); c.width = c.height = size;
+    const x = c.getContext('2d'), h = hashStr(t.url), tone = TONES[h % TONES.length];
+    const n = parseInt(tone.slice(1), 16), dk = v => Math.round(v * .58);
+    const g = x.createLinearGradient(0, 0, size, size);
+    g.addColorStop(0, tone); g.addColorStop(1, 'rgb(' + dk(n >> 16) + ',' + dk((n >> 8) & 255) + ',' + dk(n & 255) + ')');
+    x.fillStyle = g; x.fillRect(0, 0, size, size);
+    x.save(); x.scale(size / 100, size / 100);
+    const p = patternOf(h);
+    if (p.kind === 'rings') { x.strokeStyle = 'rgba(255,255,255,.17)'; x.lineWidth = 3.2; for (let r = p.step; r < 145; r += p.step) { x.beginPath(); x.arc(p.cx, p.cy, r, 0, Math.PI * 2); x.stroke(); } }
+    else { x.fillStyle = 'rgba(255,255,255,.14)'; p.bars.forEach((b, i) => x.fillRect(7 + i * 15.5, 100 - b, 9.5, b + 4)); }
+    x.restore();
+    x.fillStyle = 'rgba(255,255,255,.7)'; x.textAlign = 'center'; x.textBaseline = 'middle';
+    x.font = '700 ' + Math.round(size * .44) + 'px ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+    x.fillText(initialOf(t), size / 2, size * .53);
+    url = c.toDataURL('image/png');
+  } catch (_) {}
+  if (artCache.size > 60) artCache.clear();
+  artCache.set(key, url);
+  return url;
+}
 
 /* ===== CROSS-ORIGIN TRANSPORT =====
    The player is hosted on a fixed origin while the host page can be any site,
-   so BroadcastChannel can't bridge them — it's origin-scoped. Page->player
-   traffic goes over postMessage instead. Every message carries __afp:1 so we
-   ignore the unrelated postMessage chatter that many sites emit.
-   Inbound origin is deliberately NOT restricted (any site may send), so the
+   so page->player traffic goes over postMessage. Every message carries __afp:1.
+   Inbound origin is deliberately not restricted (any site may send), so the
    payload shape is validated strictly instead. */
+const deriveTitle = u => { try { return decodeURIComponent(u.split('/').pop().split('?')[0]).slice(0, 60) || 'Untitled'; } catch (_) { return 'Untitled'; } };
+const isHttpUrl = s => typeof s === 'string' && s.length < 4096 && /^https?:\/\/\S+$/i.test(s);
+const validTrack = d => d && isHttpUrl(d.url)
+  && (d.title === undefined || d.title === null || typeof d.title === 'string')
+  && (d.site === undefined || d.site === null || (typeof d.site === 'string' && d.site.length < 200))
+  && (d.page === undefined || d.page === null || typeof d.page === 'string');
+const okDur = v => (typeof v === 'number' && isFinite(v) && v > 0) || v === null ? v : undefined;
+// `page` (optional) is the URL of the page the track was found on; it powers
+// the "from site" link and the banner's Open page.
+const normTrack = d => ({ url: d.url, title: (typeof d.title === 'string' && d.title.trim()) ? d.title.trim().slice(0, 300) : deriveTitle(d.url),
+  site: (typeof d.site === 'string' && d.site) || null, page: isHttpUrl(d.page) ? d.page : null, dur: okDur(d.dur) });
+const cleanTrack = t => ({ url: t.url, title: t.title, site: t.site || null, page: t.page || null, dur: t.dur });
 
-const deriveTitle=u=>{
-  try{return decodeURIComponent(u.split('/').pop().split('?')[0]).slice(0,60)||'Untitled'}
-  catch(_){return 'Untitled'}
-};
-const validTrack=d=>d&&typeof d.url==='string'&&/^https?:\/\//i.test(d.url)
-  &&(d.title===undefined||d.title===null||typeof d.title==='string')
-  &&(d.site===undefined||d.site===null||(typeof d.site==='string'&&d.site.length<200));
-
-// Where the track came from. Prefer the page it was grabbed from; fall back to
-// the file's own host for tracks added directly here (pasted URL, M3U import).
-function siteOf(t){
-  if(t&&t.site)return t.site;
-  try{return new URL(t.url).hostname.replace(/^www\./,'')}catch(_){return ''}
+// Where the track came from: the page it was found on, else the file's own host.
+function siteOf(t) {
+  if (t && t.site) return t.site;
+  try { return new URL(t.url).hostname.replace(/^www\./, ''); } catch (_) { return ''; }
 }
-// Deterministic colour per site so the same source always looks the same.
-function siteHue(s){let h=0;for(let i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))>>>0;return h%360}
 
-function reply(e,msg){
-  try{
-    if(!e.source)return;
+function reply(e, msg) {
+  try {
+    if (!e || !e.source) return;
     // e.origin is "null" for sandboxed/file:// openers, which is not a valid targetOrigin
-    e.source.postMessage(Object.assign({__afp:1},msg), e.origin&&e.origin!=='null'?e.origin:'*');
-  }catch(_){}
+    e.source.postMessage(Object.assign({ __afp: 1 }, msg), e.origin && e.origin !== 'null' ? e.origin : '*');
+  } catch (_) {}
 }
-
-window.addEventListener('message',e=>{
-  const d=e.data;
-  if(!d||typeof d!=='object'||d.__afp!==1)return;
-  if(d.type==='ping'){reply(e,{type:'pong'});return}
-  if(d.type==='add'){
-    if(!validTrack(d))return;
-    const ok=addTrack(d.url,d.title||deriveTitle(d.url),d.site);
-    reply(e,{type:'added',count:ok?1:0,requested:1});
-    return;
-  }
-  // Sent when the userscript's async ID3 read finds a better title than the
-  // DOM guess it originally queued the track with.
-  if(d.type==='retitle'){
-    if(!validTrack(d)||typeof d.title!=='string'||!d.title.trim())return;
-    const t=queue.find(x=>x.url===d.url);
-    if(t&&t.title!==d.title){t.title=d.title;renderQ();
-      if(idx>=0&&queue[idx]&&queue[idx].url===d.url)$('nt').textContent=d.title}
-    return;
-  }
-  if(d.type==='addMany'&&Array.isArray(d.tracks)){
-    let n=0;
-    d.tracks.forEach(t=>{if(validTrack(t)&&addTrack(t.url,t.title||deriveTitle(t.url),t.site))n++});
-    reply(e,{type:'added',count:n,requested:d.tracks.length});
-  }
-});
-
-// Tell the opener we're live so it can flush anything it buffered while we loaded.
-(function announceReady(){
-  try{
-    if(window.opener&&!window.opener.closed)window.opener.postMessage({__afp:1,type:'ready'},'*');
-  }catch(_){}
-})();
-
-/* ===== SHARED QUEUE ACROSS SITES =====
-   Every player window lives on this one fixed origin regardless of which site
-   opened it, so localStorage and BroadcastChannel are shared between them all.
-   That's what makes one queue span multiple hostnames — the thing the old
-   about:blank popup could never do, because it inherited the opener's origin. */
-
-const STORE='__afp_queue_v1';
-const sync=new BroadcastChannel('__afp_player_sync');
-let applyingRemote=false;
-
-/* A 'state' message REPLACES the receiver's queue wholesale, so broadcasting one
-   is a claim to be authoritative. Two moments where that claim is false:
-
-     before `loaded`   we haven't read the stored queue yet, so ours is empty or
-                       holds only what was just handed to us. A window that
-                       broadcasts here wipes the real queue in every other
-                       window — the "track vanished" report.
-     after `standingDown`  we lost the singleton election and are about to close.
-                       Nothing a dying window says should overwrite the survivor.
-
-   Both stay silent instead, and hand their tracks over with 'adopt', which
-   merges. */
-let loaded=false,standingDown=false;
-
-/* ===== EXTENSION-OWNED QUEUE =====
-   chrome.storage is the only store every site can reach. localStorage is
-   partitioned for third-party frames, so a queue kept there splits into copies
-   that never see each other. The extension's relay content script runs on this
-   page too, so we read and write through it and fall back to localStorage when
-   no extension answers (standalone / Tampermonkey). */
-let extAlive = false, extSeq = 0;
-const extWaiting = Object.create(null);
 
 window.addEventListener('message', e => {
   const d = e.data;
+  if (!d || typeof d !== 'object' || d.__afp !== 1 || d.reply) return;
+  if (d.type === 'ping') { reply(e, { type: 'pong' }); return; }
+  if (d.type === 'add') { if (validTrack(d)) whenElected(() => incoming([d], e, d)); return; }
+  if (d.type === 'addMany' && Array.isArray(d.tracks)) { whenElected(() => incoming(d.tracks, e, d)); return; }
+  // Sent when the page's async ID3 read finds a better title than the DOM guess.
+  if (d.type === 'retitle') {
+    if (!validTrack(d) || typeof d.title !== 'string' || !d.title.trim()) return;
+    const t = queue.find(x => x.url === d.url);
+    if (t && t.title !== d.title.trim()) {
+      t.title = d.title.trim().slice(0, 300); renderQ();
+      if (idx >= 0 && queue[idx] === t) { paintNow(); updateMediaSession(); }
+    }
+  }
+});
+
+/* An add from a page is someone clicking a track. The reply says what really
+   happened, so the page can tell "Added" from "Already in the queue":
+   {type:'added', count, requested, added: [new urls], dup: [urls already queued],
+   id (echoed when the message had one)}. When the player is idle, the first
+   requested track starts, whether new or already queued; send play:false to
+   only queue. A window that is standing down forwards to the incumbent and
+   replies with the incumbent's answer. */
+function incoming(list, e, msg) {
+  const valid = list.filter(validTrack).slice(0, 1000).map(normTrack), play = msg.play;
+  const id = typeof msg.id === 'string' || typeof msg.id === 'number' ? msg.id : undefined;
+  const send = r => reply(e, Object.assign({ type: 'added', count: r.added.length, requested: list.length, added: r.added, dup: r.dup }, id !== undefined ? { id } : {}));
+  if (standingDown) {
+    relay(valid, play).then(r => send(r && Array.isArray(r.added) && Array.isArray(r.dup) ? r : { added: valid.map(t => t.url), dup: [] }));
+    return;
+  }
+  send(mergeTracks(valid, play));
+}
+function mergeTracks(valid, play) {
+  const added = [], dup = [];
+  // Before the stored queue has loaded (a reopened player), a track may look
+  // new here while it's already saved; check the store so the reply is true.
+  let stored = null;
+  if (!loaded) { try { const s = JSON.parse(localStorage.getItem(STORE) || 'null'); stored = new Set((s && Array.isArray(s.queue) ? s.queue : []).map(t => t && t.url)); } catch (_) {} }
+  for (const t of valid) {
+    const known = !!(stored && stored.has(t.url));
+    if (addTrack(t.url, t.title, t.site, { page: t.page, dur: t.dur, noPlay: true }) && !known) added.push(t.url); else dup.push(t.url);
+  }
+  if (valid.length && play !== false && !playing && !standingDown) {
+    const i = queue.findIndex(x => x.url === valid[0].url);
+    if (i >= 0) { if (i === idx && audio && !audio.error && audio.getAttribute('src')) togglePlay(); else playIdx(i); }
+  }
+  return { count: added.length, added, dup };
+}
+
+// Tell the opener we're live so it can flush anything it buffered while we loaded.
+(function announceReady() {
+  try { if (window.opener && !window.opener.closed) window.opener.postMessage({ __afp: 1, type: 'ready' }, '*'); } catch (_) {}
+})();
+
+/* ===== SHARED QUEUE ACROSS SITES =====
+   Every player window lives on this one origin regardless of which site opened
+   it, so localStorage and BroadcastChannel are shared between them all.
+
+   A 'state' message replaces the receiver's queue wholesale, so broadcasting one
+   is a claim to be authoritative. It is false before `loaded` (we haven't read
+   the stored queue yet) and after `standingDown` (we lost the election and are
+   about to close). Both stay silent and hand tracks over with 'adopt'. */
+const STORE = '__afp_queue_v1', NOW_KEY = '__afp_now_v1';
+const sync = new BroadcastChannel('__afp_player_sync');
+let applyingRemote = false, loaded = false, standingDown = false;
+
+/* ===== EXTENSION-OWNED QUEUE =====
+   chrome.storage is the only store every site can reach. The extension's relay
+   content script runs on this page too, so we read and write through it and
+   fall back to localStorage when no extension answers. */
+let extAlive = false, extSeq = 0;
+const extWaiting = Object.create(null);
+window.addEventListener('message', e => {
+  const d = e.data;
   if (!d || typeof d !== 'object' || d.__afp !== 1 || !d.reply) return;
-  // A push from the worker is proof the relay is alive. Without this, a cold MV3
-  // worker that missed the one 700ms probe at load left extAlive stuck false, so
-  // this window wrote only to localStorage and its reorders/removes never reached
-  // chrome.storage — even though pushes were clearly arriving.
-  if (d.type === 'ext-player-state') { extAlive = true; }
-  if (d.type === 'ext-queue-changed') { extAlive = true; applyQueue(d.queue); return; }
+  // A push from the worker is proof the relay is alive, even if the first probe missed.
+  if (d.type === 'ext-player-state') extAlive = true;
+  if (d.type === 'ext-queue-changed') { extAlive = true; replaceQueue(d.queue); return; }
   const w = extWaiting[d.id];
   if (w) { delete extWaiting[d.id]; w(d); }
 });
-
 function extCall(type, payload) {
   return new Promise(resolve => {
     const id = 'r' + (++extSeq);
@@ -392,580 +546,866 @@ function extCall(type, payload) {
   });
 }
 
-// Replace the queue from an authoritative source without echoing it back out.
-function applyQueue(list) {
+// Replace the queue from an authoritative source without echoing it back,
+// keeping playback anchored by URL and this window's own observations.
+function replaceQueue(list) {
   if (!Array.isArray(list)) return;
   const cur = idx >= 0 && queue[idx] ? queue[idx].url : null;
+  const prev = new Map(queue.map(t => [t.url, t])), seen = new Set();
   applyingRemote = true;
   try {
     queue.length = 0;
-    list.forEach(t => { if (t && typeof t.url === 'string')
-      queue.push({ url: t.url, title: t.title || deriveTitle(t.url), site: t.site || null, dur: t.dur }); });
-    idx = cur ? queue.findIndex(t => t.url === cur) : -1;   // keep playback anchored
+    for (const raw of list) {
+      if (!raw || typeof raw.url !== 'string' || seen.has(raw.url)) continue;
+      seen.add(raw.url);
+      const t = normTrack(Object.assign({}, raw, { url: raw.url })), old = prev.get(raw.url);
+      if (old) { t.dead = old.dead; t.reason = old.reason; t.__authAt = old.__authAt; if (t.dur === undefined) t.dur = old.dur; }
+      queue.push(t);
+    }
+    idx = cur ? queue.findIndex(t => t.url === cur) : -1;
     renderQ();
   } finally { applyingRemote = false; }
 }
 
-function syncState(){
-  if(applyingRemote)return;                       // don't echo a change we just received
-  if(!loaded||standingDown)return;                // not authoritative — see above
-  // `dead` is a transient observation — a throttled host or a flaky connection.
-  // Persisting it would brand a track permanently unplayable in every window and
-  // every future session, with no way back. Duration is stable, so it stays.
-  const clean=queue.map(t=>({url:t.url,title:t.title,dur:t.dur,site:t.site}));
-  // Extension is authoritative when present; localStorage is the standalone path.
+function syncState() {
+  if (applyingRemote) return;                    // don't echo a change we just received
+  if (!loaded || standingDown) return;           // not authoritative, see above
+  // `dead` is a transient observation (a throttled host, a flaky connection);
+  // persisting it would brand a track unplayable everywhere. Duration is stable.
+  const clean = queue.map(cleanTrack);
   if (extAlive) extCall('ext-queue-set', { queue: clean, idx });
-  else { try{localStorage.setItem(STORE,JSON.stringify({queue:clean,idx}))}catch(_){} }
-  try{sync.postMessage({type:'state',queue:clean})}catch(_){}
+  else { try { localStorage.setItem(STORE, JSON.stringify({ queue: clean, idx })); } catch (_) {} }
+  try { sync.postMessage({ type: 'state', queue: clean }); } catch (_) {}
 }
 
+// The current track and position, so a reload or reopen picks up where it was.
+let lastNowSave = 0;
+function saveNow() {
+  if (!loaded || standingDown) return;
+  lastNowSave = Date.now();
+  try {
+    const t = idx >= 0 ? queue[idx] : null;
+    if (!t) { localStorage.removeItem(NOW_KEY); return; }
+    let pos = 0;
+    if (audio && audio.getAttribute('src')) pos = audio.readyState < 1 && audio.__at ? audio.__at : (audio.ended ? 0 : audio.currentTime);
+    localStorage.setItem(NOW_KEY, JSON.stringify({ url: t.url, pos: Math.floor(pos || 0), ts: Date.now() }));
+  } catch (_) {}
+}
+addEventListener('pagehide', saveNow);
+document.addEventListener('visibilitychange', () => { if (document.hidden) saveNow(); });
 
-
-sync.onmessage=e=>{
-  const d=e.data;
-  if(!d)return;
-  // A departing window handing over what it holds. Merge — addTrack dedupes by
-  // URL, so anything we already have is a no-op and nothing is displaced.
-  if(d.type==='adopt'&&Array.isArray(d.tracks)&&!standingDown){
-    let n=0;
-    d.tracks.forEach(t=>{if(validTrack(t)&&addTrack(t.url,t.title||deriveTitle(t.url),t.site))n++});
-    if(n)qToast(n>1?('Adopted '+n+' tracks'):'Track added');
+sync.onmessage = e => {
+  const d = e.data;
+  if (!d) return;
+  // A departing window handing over what someone just clicked. Merge, never replace.
+  if (d.type === 'adopt' && Array.isArray(d.tracks) && !standingDown) {
+    const valid = d.tracks.filter(validTrack).map(normTrack);
+    const r = mergeTracks(valid, d.play);
+    if (d.rid) { try { sync.postMessage({ type: 'adopted', rid: d.rid, count: r.count, added: r.added, dup: r.dup }); } catch (_) {} }
+    if (r.count) qToast(r.count > 1 ? 'Added ' + r.count + ' tracks' : 'Added ‘' + shortTitle(valid.find(t => t.url === r.added[0]).title) + '’');
     return;
   }
-  if(d.type!=='state'||!Array.isArray(d.queue))return;
-  const cur=idx>=0&&queue[idx]?queue[idx].url:null;   // keep our own playback anchored
-  applyingRemote=true;
-  try{
-    queue.length=0;
-    // Carry dur across the sync — dropping it here made every cross-window state
-    // broadcast wipe measured durations, forcing every row to re-probe.
-    d.queue.forEach(t=>{if(t&&typeof t.url==='string')queue.push({url:t.url,title:t.title||deriveTitle(t.url),site:t.site||null,dur:t.dur})});
-    idx=cur?queue.findIndex(t=>t.url===cur):-1;      // remap by URL, not position
-    renderQ();
-  }finally{applyingRemote=false}
+  if (d.type === 'adopted' && adoptWait[d.rid]) { const f = adoptWait[d.rid]; delete adoptWait[d.rid]; f(d); return; }
+  if (d.type === 'state' && Array.isArray(d.queue)) replaceQueue(d.queue);
 };
 
-/* Heartbeat so the queue bridge can tell whether any player window is open.
-   The page itself can't determine this — its window reference dies on
-   navigation and it can't see across origins — which is why adding a track
-   used to spawn a new window every time. */
-(function heartbeat(){
+/* Heartbeat so the page can tell whether any player window is open. */
+(function heartbeat() {
   const beat = () => { try { sync.postMessage({ type: 'alive' }); } catch (_) {} };
   beat();
   setInterval(beat, 2000);
-  // Answer an immediate poll so a freshly-loaded bridge doesn't wait for the tick.
   sync.addEventListener('message', e => { if (e.data && e.data.type === 'poll') beat(); });
 })();
 
 /* ===== ONE WINDOW WINS =====
-   Safety net for when the page cannot reclaim us by name — a site with
-   Cross-Origin-Opener-Policy severs that relationship, and then every add would
-   open another window and they would pile up.
+   Window names are scoped to a browsing context group, so a page in another tab
+   cannot find the existing player by name and opens a second window. Every
+   player window is top-level on this origin, so they can all see each other on
+   the shared channel: a new window asks who is here, and if an older one
+   answers, the newcomer steps aside.
 
-   Every player window is top-level on THIS origin, so unlike the page we can
-   all see each other on the shared channel. A newly-opened window asks who is
-   already here; if an older one answers, the newcomer steps aside.
+   It doesn't close on the spot: it forwards whatever its opener sends to the
+   incumbent with 'adopt' (a merge) and closes RELAY_QUIET after the handoff.
+   The long RELAY_GRACE runs only while nothing has been handed over yet, since
+   a track may still be in flight from a slow page. (Real fix for the flash:
+   BumbleTap answering ext-player-open / ext-queue-add, so no window opens.)
 
-   A window that stands down does NOT just close. It becomes a relay: whatever
-   its opener sends is forwarded to the incumbent with 'adopt' — a MERGE, not
-   the wholesale replace a 'state' broadcast would do — and only then does it
-   close.
+   Adds that land in the first ELECTION_WAIT ms are held until the election is
+   decided, so a newcomer never starts playing a track it is about to forward. */
+const RELAY_GRACE = 6000, RELAY_QUIET = 300, ELECTION_WAIT = 150;
+let relayTimer = null, handedOver = false, electionSettled = false;
+const afterElection = [], adoptWait = Object.create(null);
+function whenElected(fn) { if (electionSettled) fn(); else afterElection.push(fn); }
+function settleElection() { if (electionSettled) return; electionSettled = true; afterElection.splice(0).forEach(fn => { try { fn(); } catch (_) {} }); }
 
-   Closing on a fixed timer instead is what lost tracks when the add came from a
-   second site. Window names are scoped to a browsing context group, so a page
-   in another tab cannot find the existing player by name and always opens a
-   duplicate. That duplicate has to load a page before it can receive anything,
-   and when the load ran past the timer the window closed while the track was
-   still in flight. Waiting for the track rather than for the clock is the
-   difference. */
-const RELAY_GRACE = 6000;   // nothing arrived yet — it may still be in flight
-const RELAY_QUIET = 800;    // something arrived — brief wait for stragglers
-let relayTimer = null;
-
-function relayToIncumbent(){
-  if(!standingDown)return;
-  if(queue.length){
-    try{sync.postMessage({type:'adopt',tracks:queue.map(t=>({url:t.url,title:t.title,site:t.site,dur:t.dur}))})}catch(_){}
-    queue.length=0;idx=-1;              // handed over — never send the same track twice
-    renderQ({noSync:true});             // noSync: a relay is never authoritative
-  }
+function scheduleClose() {
   clearTimeout(relayTimer);
-  relayTimer=setTimeout(()=>{try{window.close()}catch(_){}},RELAY_QUIET);
+  const wait = handedOver ? RELAY_QUIET : (location.hash === '#show' ? 1500 : RELAY_GRACE);
+  relayTimer = setTimeout(() => { try { window.close(); } catch (_) {} }, wait);
 }
-
-(function electSingleton(){
+// Forward tracks to the incumbent; resolves with its {count, added, dup} or null.
+function relay(tracks, play) {
+  return new Promise(res => {
+    if (!tracks.length) { res(null); return; }
+    const rid = 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    adoptWait[rid] = res;
+    try { sync.postMessage({ type: 'adopt', rid, play, tracks: tracks.map(cleanTrack) }); } catch (_) {}
+    handedOver = true;
+    scheduleClose();
+    setTimeout(() => { if (adoptWait[rid]) { delete adoptWait[rid]; res(null); } }, 250);
+  });
+}
+function relayToIncumbent() {
+  if (!standingDown) return;
+  if (queue.length) {
+    const tracks = queue.map(cleanTrack);
+    queue.length = 0; idx = -1;         // handed over: never send the same track twice
+    renderQ({ noSync: true });          // a relay is never authoritative
+    relay(tracks);
+  }
+  scheduleClose();
+}
+function standDown() {
+  standingDown = true;
+  document.body.classList.add('relaying');
+  // Surface the incumbent only when the user asked to see a player (#show).
+  if (location.hash === '#show') { try { sync.postMessage({ type: 'focus-incumbent' }); } catch (_) {} }
+  playing = false; stopAudio();         // a relay must not play
+  relayToIncumbent();
+  settleElection();
+}
+(function electSingleton() {
   const BORN = Date.now() + Math.random();
-
   sync.addEventListener('message', e => {
     const d = e.data;
     if (!d) return;
-    if (d.type === 'who') { try { sync.postMessage({ type: 'here', born: BORN }); } catch (_) {} return; }
-    if (d.type === 'here' && typeof d.born === 'number' && d.born < BORN && !standingDown) {
-      standingDown = true;
-      // Only surface the incumbent when the user actually asked to SEE a player
-      // (the Player button opens us with #show). Doing it on every add threw the
-      // user out of the page they were reading to a window they never requested.
-      if (location.hash === '#show') { try { sync.postMessage({ type: 'focus-incumbent' }); } catch (_) {} }
-      if (audio) { try { audio.pause(); } catch (_) {} }   // a relay must not play
-      // Hand over anything already here, then wait for the opener's delivery.
-      // addTrack() calls back in for each arrival, which restarts the timer.
-      relayToIncumbent();
-      clearTimeout(relayTimer);
-      relayTimer = setTimeout(() => { try { window.close(); } catch (_) {} }, RELAY_GRACE);
-    }
+    if (d.type === 'who') { if (!standingDown) { try { sync.postMessage({ type: 'here', born: BORN }); } catch (_) {} } return; }
+    if (d.type === 'here' && typeof d.born === 'number' && d.born < BORN && !standingDown) standDown();
+    if (d.type === 'focus-incumbent' && !standingDown) { try { window.focus(); } catch (_) {} }
   });
-
-  // Incumbent pulls itself forward when a newcomer stands down.
-  sync.addEventListener('message', e => {
-    if (e.data && e.data.type === 'focus-incumbent' && !standingDown) {
-      try { window.focus(); } catch (_) {}
-    }
-  });
-
   try { sync.postMessage({ type: 'who' }); } catch (_) {}
+  setTimeout(settleElection, ELECTION_WAIT);
 })();
 
-function restore(){
-  try{
-    const s=JSON.parse(localStorage.getItem(STORE)||'null');
-    if(!s||!Array.isArray(s.queue)||!s.queue.length)return;
-    applyingRemote=true;                            // load without re-broadcasting
-    try{
-      // push directly rather than via addTrack, so restoring never autoplays —
-      // but still dedupe, or a track the opener already handed us comes back twice
-      s.queue.forEach(t=>{if(t&&typeof t.url==='string'&&!queue.some(x=>x.url===t.url))queue.push({url:t.url,title:t.title||deriveTitle(t.url),site:t.site||null})});
-      renderQ();
-    }finally{applyingRemote=false}
-  }catch(_){}
-}
-
-// Returns whether the track was actually added, so acks can report the truth —
-// a duplicate is a no-op, and the sender needs to know that, not "count: 1".
-// While standing down we are a relay: forward instead of playing, and let the
-// arrival reset the close timer so a burst of adds is never cut off halfway.
-function addTrack(u,t,site){
-  if(queue.find(x=>x.url===u))return false;
-  queue.push({url:u,title:t,site:site||null});renderQ();
-  if(standingDown){relayToIncumbent();return true}
-  if(idx===-1)playIdx(0);
+/* ===== QUEUE OPERATIONS ===== */
+// Returns whether the track was actually added (a duplicate URL is a no-op).
+// Unless told otherwise, an add when nothing is playing starts that track.
+function addTrack(u, t, site, o) {
+  o = o || {};
+  if (typeof u !== 'string' || !u || queue.some(x => x.url === u)) return false;
+  queue.push({ url: u, title: t || deriveTitle(u), site: site || null, page: isHttpUrl(o.page) ? o.page : null, dur: o.dur });
+  renderQ();
+  if (standingDown) { relayToIncumbent(); return true; }
+  if (!o.noPlay && !playing) playIdx(queue.length - 1);
   return true;
 }
-let audioAC=null;   // aborts the outgoing element's listeners on every switch
-// Detach the current element's listeners and tear it down cleanly. Aborting the
-// listeners BEFORE clearing src is what stops the 'error' that an empty src
-// fires from running the outgoing track's handler — the bug that branded a track
-// dead and flashed the banner on every skip, remove and clear. removeAttribute +
-// load() is itself the teardown that fires no error at all.
-function stopAudio(){
-  if(audioAC){audioAC.abort();audioAC=null}
-  if(audio){try{audio.pause();audio.removeAttribute('src');audio.load()}catch(_){}}
-}
-function playIdx(i){
-  if(i<0||i>=queue.length)return;idx=i;syncState();const t=queue[idx];
-  // Intent to play, set synchronously (never in play()'s promise) so no probe
-  // ever reads the player as idle mid-switch, and reclaim any in-flight probe
-  // connections for the track about to start.
-  playing=true;probeAborts.forEach(fn=>fn());
-  stopAudio();
-  $('nt').textContent=t.title;$('ns').textContent=t.url.length>50?t.url.substring(0,47)+'...':t.url;
-  $('err').classList.remove('show');$('sf').style.width='0%';$('tc').textContent='0:00';$('td').textContent='--:--';
-  // Native loop replays from the buffer, gaplessly. Re-invoking playIdx on
-  // 'ended' (the old loop path) tore the element down and re-streamed the whole
-  // file from byte 0 each pass — a multi-second silent gap, and on a throttled
-  // host a full re-download every loop.
-  audio=new Audio(t.url);audio.volume=vol;audio.muted=muted;audio.playbackRate=speeds[si];audio.loop=looping;
-  // el is the stable capture; audioAC scopes every listener to THIS element so a
-  // newer playIdx aborts them wholesale and no stale handler survives a switch.
-  const el=audio, ac=audioAC=new AbortController(), sig={signal:ac.signal};
-  el.addEventListener('loadedmetadata',()=>{
-    $('td').textContent=fmt(el.duration);
-    if(t.dead){t.dead=false;renderQ()}      // it loaded, so it isn't dead — drop the badge
-  },sig);
-  el.addEventListener('timeupdate',()=>{$('tc').textContent=fmt(el.currentTime);if(isFinite(el.duration))$('sf').style.width=(el.currentTime/el.duration*100)+'%'},sig);
-  // Playback stopped, so the connections it held are free — catch up on any
-  // duration probes that were held back while it ran.
-  el.addEventListener('pause',()=>{if(!playing)pumpProbes()},sig);
-  // With audio.loop set, 'ended' never fires while looping — the element repeats
-  // itself. So this only runs when a track genuinely finishes.
-  el.addEventListener('ended',()=>{playing=false;$('pp').innerHTML=playIcon;$('nart').classList.remove('spin');
-    if(shuffling){playIdx(Math.floor(Math.random()*queue.length))}
-    else if(idx<queue.length-1){playIdx(idx+1)}
-    else {renderQ();pumpProbes()}},sig);
-  /* ===== SITE-LOCKED STREAMS =====
-     Some hosts gate their media on a session cookie belonging to the site the
-     track was grabbed from. That cookie is same-site there and third-party
-     here, so Chrome drops it and the request comes back 403 — the track plays
-     on its own site and nowhere else.
 
-     The extension is the only party that can still present it: a background
-     fetch to that host carries the cookie, and a declarativeNetRequest rule can
-     attach it to OUR media requests too. So on the first failure, ask it to
-     authorize the host and try once more. A media element reports no status
-     code, only "it broke", so we cannot tell 403 from a genuinely dead link up
-     front — attempting authorization and seeing whether it helps IS the test. */
-  el.addEventListener('error',()=>{
-    // Re-auth is allowed again after a minute, not just once ever: the source
-    // site's session cookie rotates, and a one-shot flag left a track that used
-    // to play permanently dead with no way to pick up the new cookie. force:true
-    // tells the worker to re-read cookies rather than reuse a stale capture.
-    const canAuth=extAlive&&Date.now()-(t.__authAt||0)>60000;
-    if(canAuth){
-      t.__authAt=Date.now();
-      $('err').textContent='Authorizing with '+siteOf(t)+'…';$('err').classList.add('show');
-      extCall('ext-authorize',{url:t.url,site:t.site,force:true}).then(r=>{
-        // Retry only if this track is still the current selection; key by URL so
-        // a queue reorder mid-flight can't replay the wrong one.
-        if(r&&r.ok&&r.authorized&&queue[idx]&&queue[idx].url===t.url){playIdx(idx);return}
-        failTrack(r&&r.ok?'Site-locked stream — no cookie for '+siteOf(t):'Cannot load audio — check URL');
-      });
-      return;
-    }
-    failTrack(t.__authAt?'Site-locked stream — '+siteOf(t)+' will not serve it here'
-                        :'Cannot load audio — check URL');
-  },sig);
-  function failTrack(msg){
-    $('err').textContent=msg;$('err').classList.add('show');
-    // Flag the row too — but find it by URL, so a reorder between play and the
-    // async error can never brand a bystander that slid into the old index.
-    const row=queue.find(x=>x.url===t.url);
-    if(row){row.dead=true;row.dur=null;renderQ()}
-  }
-  // playing was set true above; the promise only settles the UI. The el guard
-  // drops a stale settle from an element a newer playIdx already replaced, which
-  // would otherwise reset `playing` or pump probes over the live track.
-  el.play().then(()=>{if(el===audio){$('pp').innerHTML=pauseIcon;$('nart').classList.add('spin')}})
-           .catch(()=>{if(el===audio){playing=false;pumpProbes()}});
-  renderQ();updateVol();
-  if('mediaSession' in navigator)navigator.mediaSession.metadata=new MediaMetadata({title:t.title});
-}
-// Toggle only flips the equalizer animation on the active row — a full renderQ
-// here would broadcast state to every window on each play/pause.
-function refreshPlayingRow(){const r=document.querySelector('.qi.on');if(r)r.classList.toggle('paused',!playing)}
-function togglePlay(){if(!audio)return;if(playing){audio.pause();playing=false;$('pp').innerHTML=playIcon;$('nart').classList.remove('spin')}else{probeAborts.forEach(fn=>fn());audio.play();playing=true;$('pp').innerHTML=pauseIcon;$('nart').classList.add('spin')}refreshPlayingRow()}
-function removeTrack(i){if(i===idx){stopAudio();queue.splice(i,1);if(!queue.length){idx=-1;playing=false;$('nt').textContent='No track loaded';$('ns').textContent='';$('pp').innerHTML=playIcon;$('nart').classList.remove('spin');pumpProbes()}else{idx=Math.min(i,queue.length-1);playIdx(idx)}}else{const a=i>idx;queue.splice(i,1);if(!a)idx--}renderQ()}
-/* ===== QUEUE RENDERING ===== */
-
-const ICO={
-  dl:'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
-  pl:'<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.14v14l11-7-11-7z"/></svg>',
-  rm:'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
-};
-const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-let filterText='';
-
-/* Durations are loaded lazily as rows scroll into view — loading metadata for
-   every track up front would fire one request per queue item on open. */
-const MAX_PROBES=3, PROBE_TIMEOUT=8000;
-let probesActive=0; const probeQueue=[];
-// Abort handles for probes currently in flight, so playback can reclaim their
-// connections the instant it starts rather than waiting for them to finish.
-const probeAborts=new Set();
-
-function pumpProbes(){
-  // Never start a probe while the document is hidden. A hidden tab won't load
-  // preload="metadata" AND throttles timers, so the timeout can't fire either —
-  // probes would occupy every concurrency slot indefinitely. This matters here
-  // because the player is a popup that spends most of its life behind the main
-  // window. Deferred work resumes on visibilitychange below.
-  //
-  // Never probe while a track is playing either. Each probe opens its own
-  // connection to an audio host, and those compete with the playing stream for
-  // the per-host connection budget and for bandwidth. A host that serves at
-  // roughly playback rate — some do so deliberately — leaves the stream no
-  // margin, so the stolen bandwidth surfaces as a stutter. This is the lag that
-  // the same-origin per-site player never had, because it had no queue to probe.
-  // Probing resumes from the audio 'pause'/'ended' handlers and on
-  // visibilitychange; a row just shows an unknown duration until then.
-  if(document.hidden||playing)return;
-  while(probesActive<MAX_PROBES&&probeQueue.length)runProbe(probeQueue.shift());
-}
-
-document.addEventListener('visibilitychange',()=>{
-  if(document.hidden)return;
-  // Re-queue anything still unknown; the observer only fires for visible rows.
-  document.querySelectorAll('.qi').forEach(r=>{
-    const t=queue.find(x=>x.url===r.dataset.url);
-    if(t&&t.dur===undefined&&!probeQueue.includes(t.url))probeQueue.push(t.url);
-  });
-  pumpProbes();
-});
-
-function runProbe(url){
-  const t=queue.find(x=>x.url===url);
-  if(!t||t.dur!==undefined){pumpProbes();return}
-  probesActive++;
-  const probe=new Audio();
-  probe.preload='metadata';
-  let done=false;
-  // Shared teardown: stop the timer, free the slot and the connection, and
-  // drop the abort handle. Runs once, whichever of finish/abort gets there first.
-  const settle=()=>{done=true;clearTimeout(timer);probesActive--;probeAborts.delete(abort);try{probe.src='';probe.load()}catch(_){}};
-  const finish=(dur,dead)=>{
-    if(done)return;                       // timeout and event can both fire
-    settle();
-    t.dur=dur; if(dead)t.dead=true;
-    renderQ();pumpProbes();
-  };
-  // Playback starting reclaims the connection: release WITHOUT recording a
-  // result, and re-queue the url, so the row is measured later rather than left
-  // stuck at "–". dur stays undefined, which is what keeps it eligible to retry.
-  const abort=()=>{if(done)return;settle();if(!probeQueue.includes(url))probeQueue.push(url)};
-  probeAborts.add(abort);
-  // Without this, a throttled or hanging host leaves the row loading forever and
-  // leaks the request — neither loadedmetadata nor error ever fires. A slow host
-  // is recorded as unknown duration, NOT as dead; only a real error means dead.
-  const timer=setTimeout(()=>finish(null,false),PROBE_TIMEOUT);
-  probe.addEventListener('loadedmetadata',()=>finish(isFinite(probe.duration)?probe.duration:null,false),{once:true});
-  probe.addEventListener('error',()=>finish(null,true),{once:true});
-  probe.src=url;
-}
-
-const durObserver=('IntersectionObserver'in window)?new IntersectionObserver(entries=>{
-  entries.forEach(en=>{
-    if(!en.isIntersecting)return;
-    durObserver.unobserve(en.target);
-    const url=en.target.dataset.url;
-    // Capped concurrency: a 50-track queue must not open 50 sockets at once
-    if(!probeQueue.includes(url))probeQueue.push(url);
-  });
-  pumpProbes();
-},{rootMargin:'120px'}):null;
-
-/* The download attribute is ignored cross-origin, so fetch to a blob first.
-   That needs CORS, which plenty of audio CDNs don't grant — hence the fallback
-   to just opening the URL and letting the browser deal with it. */
-async function downloadTrack(i,btn){
-  const t=queue[i];if(!t)return;
-  const ext=(t.url.split('?')[0].split('.').pop()||'mp3').slice(0,4);
-  const safe=(t.title||'audio').replace(/[\\/:*?"<>|]/g,'-').replace(/\s+/g,' ').trim().slice(0,80);
-  const name=/\.[a-z0-9]{2,4}$/i.test(safe)?safe:safe+'.'+ext;
-  if(btn)btn.classList.add('busy');
-  try{
-    const res=await fetch(t.url,{mode:'cors'});
-    if(!res.ok)throw new Error('HTTP '+res.status);
-    const blob=await res.blob();
-    const href=URL.createObjectURL(blob);
-    const a=document.createElement('a');a.href=href;a.download=name;
-    document.body.appendChild(a);a.click();a.remove();
-    setTimeout(()=>URL.revokeObjectURL(href),10000);
-    qToast('Downloaded '+name);
-  }catch(err){
-    // CORS-blocked or network failure — hand it to the browser instead
-    const a=document.createElement('a');
-    a.href=t.url;a.download=name;a.target='_blank';a.rel='noopener';
-    document.body.appendChild(a);a.click();a.remove();
-    qToast('Opened in new tab (site blocks direct download)');
-  }finally{ if(btn)btn.classList.remove('busy'); }
-}
-
-function moveTrack(from,to){
-  if(from===to||from<0||to<0||from>=queue.length||to>=queue.length)return;
-  const cur=idx>=0&&queue[idx]?queue[idx].url:null;
-  const [item]=queue.splice(from,1);
-  queue.splice(to,0,item);
-  if(cur)idx=queue.findIndex(x=>x.url===cur);   // keep playback anchored by URL
+function moveTrack(from, to) {
+  if (from === to || from < 0 || to < 0 || from >= queue.length || to >= queue.length) return;
+  const cur = idx >= 0 && queue[idx] ? queue[idx].url : null;
+  const [item] = queue.splice(from, 1);
+  queue.splice(to, 0, item);
+  if (cur) idx = queue.findIndex(x => x.url === cur);   // keep playback anchored by URL
   renderQ();
 }
 
-// noSync: for redraws that don't change state (filtering), so typing in the
-// filter box doesn't broadcast to every other player window on every keystroke.
-function renderQ(opts){
-  if(!opts||!opts.noSync)syncState();
-  const q=$('q');
-  $('qc').textContent=queue.length;$('hc').textContent=queue.length;
+function removeTrack(i) {
+  if (i < 0 || i >= queue.length) return;
+  if (i === idx) {
+    const was = playing;
+    stopAudio(); queue.splice(i, 1);
+    if (!queue.length) { idx = -1; playing = false; hideBanner(); pumpProbes(); }
+    else { idx = Math.min(i, queue.length - 1); loadIdx(idx, { play: was }); return; }
+  } else { queue.splice(i, 1); if (i < idx) idx--; }
+  renderQ(); paintAll(); saveNow();
+}
 
-  const fw=$('qfilterwrap');
-  if(fw)fw.style.display=queue.length>8?'block':'none';
+function clearQueue() {
+  if (!queue.length) return;
+  const snap = { list: queue.slice(), url: idx >= 0 ? queue[idx].url : null, pos: audio && audio.getAttribute('src') ? audio.currentTime : 0 };
+  stopAudio(); playing = false; queue.length = 0; idx = -1; hideBanner();
+  renderQ(); paintAll(); saveNow(); pumpProbes();
+  qToast('Cleared ' + snap.list.length + (snap.list.length > 1 ? ' tracks' : ' track'), { action: 'Undo', run: () => {
+    const seen = new Set(queue.map(t => t.url));
+    snap.list.forEach(t => { if (!seen.has(t.url)) queue.push(t); });
+    renderQ();
+    const i = snap.url ? queue.findIndex(t => t.url === snap.url) : -1;
+    if (i >= 0 && idx < 0) loadIdx(i, { play: false, at: snap.pos });
+    qToast('Queue restored');
+  } });
+}
 
-  if(!queue.length){
-    q.innerHTML='<div class="empty"><b>Nothing queued yet</b>Add audio from any page, or paste a URL above.<br><br>Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> on a page to grab a link.</div>';
+/* ===== PLAYBACK ===== */
+let audioAC = null, failStreak = 0, seekDrag = false;
+// Detach the current element's listeners and tear it down. Aborting the
+// listeners before clearing src stops the 'error' an empty src fires from
+// branding the outgoing track dead.
+function stopAudio() {
+  if (audioAC) { audioAC.abort(); audioAC = null; }
+  if (audio) { try { audio.pause(); audio.removeAttribute('src'); audio.load(); } catch (_) {} }
+}
+
+// Shuffle keeps a played set (so Next never repeats until everything has had a
+// turn) and a history (so Previous walks back the way you came).
+let shuffleSeen = new Set(), histNav = false;
+const shuffleHist = [];
+function resetShuffle() { const t = queue[idx]; shuffleSeen = new Set(t ? [t.url] : []); shuffleHist.length = 0; if (t) shuffleHist.push(t.url); }
+function nextIndex() {
+  if (!queue.length) return -1;
+  if (shuffling) {
+    if (queue[idx]) shuffleSeen.add(queue[idx].url);
+    let pool = queue.map((t, i) => i).filter(i => i !== idx && !shuffleSeen.has(queue[i].url));
+    if (!pool.length && repeatMode === 1) { resetShuffle(); pool = queue.map((t, i) => i).filter(i => i !== idx); }
+    return pool.length ? pool[Math.floor(Math.random() * pool.length)] : -1;
+  }
+  if (idx < queue.length - 1) return idx + 1;
+  return repeatMode === 1 ? 0 : -1;
+}
+function goNext() { const n = nextIndex(); if (n >= 0) playIdx(n); }
+function goPrev() {
+  if (shuffling && shuffleHist.length > 1) {
+    shuffleHist.pop();
+    while (shuffleHist.length) {
+      const i = queue.findIndex(t => t.url === shuffleHist[shuffleHist.length - 1]);
+      if (i >= 0) { histNav = true; try { playIdx(i); } finally { histNav = false; } return; }
+      shuffleHist.pop();
+    }
+  }
+  if (idx > 0) playIdx(idx - 1);
+  else if (repeatMode === 1 && queue.length > 1) playIdx(queue.length - 1);
+}
+
+function playIdx(i) { loadIdx(i, { play: true }); }
+
+/* Load a track. play:false prepares it paused (a restore after reload), at:
+   seconds to resume from, keepBanner: an auto-skip that must not hide the
+   reason it skipped. */
+function loadIdx(i, o) {
+  o = o || {};
+  if (i < 0 || i >= queue.length) return;
+  idx = i; const t = queue[idx];
+  // Intent to play, set synchronously so nothing reads the player as idle
+  // mid-switch, and reclaim any in-flight duration probes for the stream.
+  playing = o.play !== false;
+  if (playing) probeAborts.forEach(fn => fn());
+  stopAudio();
+  if (!o.keepBanner) hideBanner();
+  if (playing && shuffling && !histNav) {
+    if (shuffleHist[shuffleHist.length - 1] !== t.url) shuffleHist.push(t.url);
+    if (shuffleHist.length > 500) shuffleHist.splice(0, shuffleHist.length - 500);
+    shuffleSeen.add(t.url);
+  }
+  audio = new Audio();
+  audio.preload = playing ? 'auto' : 'metadata';
+  audio.__at = o.at > 0 ? Math.floor(o.at) : 0;
+  audio.src = t.url;
+  audio.volume = vol; audio.muted = muted; audio.defaultPlaybackRate = rate; audio.playbackRate = rate;
+  // Native loop replays from the buffer, gaplessly.
+  audio.loop = repeatMode === 2;
+  const el = audio, ac = audioAC = new AbortController(), sig = { signal: ac.signal };
+  el.addEventListener('loadedmetadata', () => {
+    if (el.__at && isFinite(el.duration) && el.__at < el.duration - 2) { try { el.currentTime = el.__at; } catch (_) {} }
+    el.__at = 0;
+    if (t.dead) { t.dead = false; t.reason = null; renderQ({ noSync: true }); }   // it loaded, so it isn't dead
+    if (isFinite(el.duration) && !t.dur) { t.dur = el.duration; renderQ(); }
+    paintTime(); paintCtrls(); posState();
+  }, sig);
+  el.addEventListener('timeupdate', () => { if (!seekDrag) paintTime(); if (Date.now() - lastNowSave > 5000) saveNow(); }, sig);
+  el.addEventListener('playing', () => { failStreak = 0; }, sig);
+  // Keep `playing` honest when something outside the player pauses or resumes
+  // the element (an unplugged headset, the OS media controls).
+  el.addEventListener('play', () => { if (!playing) { playing = true; paintPlay(); } }, sig);
+  el.addEventListener('pause', () => {
+    if (playing && !el.ended) { playing = false; paintPlay(); }
+    if (!playing && !el.ended) pumpProbes();
+    saveNow(); posState();
+  }, sig);
+  el.addEventListener('ratechange', posState, sig);
+  el.addEventListener('seeked', () => { posState(); saveNow(); }, sig);
+  el.addEventListener('durationchange', () => { paintTime(); posState(); }, sig);
+  // With loop set, 'ended' never fires; this runs only when a track finishes.
+  el.addEventListener('ended', () => {
+    playing = false;
+    const n = nextIndex();
+    if (n >= 0) { playIdx(n); return; }
+    paintPlay(); renderQ({ noSync: true }); pumpProbes(); saveNow();
+  }, sig);
+  el.addEventListener('error', () => onMediaError(el, t), sig);
+  if (playing) {
+    el.play().then(() => { if (el === audio) paintPlay(); }).catch(err => {
+      if (el !== audio || (err && err.name === 'NotSupportedError')) return;   // a load failure: 'error' handles it
+      playing = false; paintPlay(); pumpProbes();
+    });
+  }
+  paintAll(); renderQ(); updateMediaSession(); saveNow();
+}
+
+function togglePlay() {
+  if (!audio || !audio.getAttribute('src') || audio.error) {
+    if (idx >= 0 && queue[idx]) loadIdx(idx, { play: true, at: audio && !audio.error ? audio.currentTime : 0 });
+    else if (queue.length) playIdx(0);
     return;
   }
+  if (playing) { playing = false; audio.pause(); }
+  else {
+    probeAborts.forEach(fn => fn());
+    playing = true;
+    audio.play().catch(err => { if (err && err.name === 'NotAllowedError') { playing = false; paintPlay(); } });
+  }
+  paintPlay();
+}
+function seekBy(d) {
+  if (!audio || !audio.getAttribute('src')) return;
+  const dur = audio.duration;
+  let tgt = audio.currentTime + d;
+  tgt = isFinite(dur) ? Math.max(0, Math.min(dur - .25, tgt)) : Math.max(0, tgt);
+  try { audio.currentTime = tgt; } catch (_) {}
+  paintTime(); posState();
+}
 
-  const f=filterText.trim().toLowerCase();
-  const rows=queue.map((t,i)=>({t,i}))
-    // Site is matchable too — "filter: bbc" to see everything from one source
-    .filter(({t})=>!f||(t.title||'').toLowerCase().includes(f)
-                     ||t.url.toLowerCase().includes(f)
-                     ||siteOf(t).toLowerCase().includes(f));
+/* ===== WHEN A TRACK WON'T PLAY =====
+   A media element reports no status code, only "it broke". Work out the likely
+   reason from what can be checked (the scheme, an expiry stamp in the link, and
+   whether the host answers at all), say it plainly, and move on to the next
+   track rather than stopping the queue.
 
-  if(!rows.length){q.innerHTML='<div class="empty">No tracks match “'+esc(filterText)+'”</div>';return}
+   Site-locked streams: some hosts gate media on the source site's cookie, which
+   is third-party here. The extension can present it, so when it is around, ask
+   it to authorize the host and try once more first (again after a minute, since
+   the cookie rotates). */
+const LOOPBACK = h => /^(localhost|127(\.\d{1,3}){3}|\[::1\])$/i.test(h);
+const PRIVATE_HOST = h => LOOPBACK(h) || /\.(local|lan|internal|home\.arpa)$/i.test(h)
+  || /^(10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h) || /^\[(f[cd]|fe80)/i.test(h);
+const TOKEN_KEY = /^(expires|expire|exp|x-amz-signature|x-amz-expires|signature|sig|token|policy|hdnts|hdnea|key-pair-id)$/i;
+function linkExpired(u) {
+  const q = u.searchParams, now = Date.now() / 1000;
+  const num = k => { const v = q.get(k); return v && /^\d{9,11}$/.test(v) ? +v : 0; };
+  const e = num('Expires') || num('expires') || num('expire') || num('exp');
+  if (e && e < now) return true;
+  const hd = (q.get('hdnts') || q.get('hdnea') || '').match(/exp=(\d{9,11})/);
+  if (hd && +hd[1] < now) return true;
+  const ad = (q.get('X-Amz-Date') || '').match(/^(\d{4})(\d\d)(\d\d)T(\d\d)(\d\d)(\d\d)Z$/), ax = +q.get('X-Amz-Expires');
+  if (ad && ax) { const t0 = Date.UTC(+ad[1], ad[2] - 1, +ad[3], +ad[4], +ad[5], +ad[6]) / 1000; if (t0 + ax < now) return true; }
+  return false;
+}
+// A HEAD in no-cors mode can't read the status but does tell a host that
+// answers from one that doesn't, without downloading anything or logging CORS errors.
+function reachable(url) {
+  const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 5000);
+  return fetch(url, { method: 'HEAD', mode: 'no-cors', cache: 'no-store', credentials: 'omit', signal: ac.signal })
+    .then(() => true, err => (err && err.name === 'AbortError') ? null : false)
+    .finally(() => clearTimeout(timer));
+}
+function reasonFor(code, t) {
+  const site = t.site;
+  const R = {
+    mixed: ['it uses an insecure http link, which browsers block here', 'page'],
+    expired: ['the link has expired', 'page'],
+    locked: ['it only plays on ' + site, 'page'],
+    refused: ['its server didn’t send playable audio', 'link'],
+    lan: ['it’s on a local network address this player can’t reach', 'page'],
+    offline: ['you’re offline', 'retry'],
+    unreachable: ['its server didn’t respond', 'retry'],
+    format: ['this browser can’t play its format', 'page'],
+  }[code] || ['its server didn’t send playable audio', 'link'];
+  return { code, text: R[0], act: R[1] };
+}
+async function diagnose(t, mediaCode) {
+  let u; try { u = new URL(t.url); } catch (_) { return reasonFor('format', t); }
+  if (navigator.onLine === false) return reasonFor('offline', t);
+  if (u.protocol === 'http:' && location.protocol === 'https:' && !LOOPBACK(u.hostname)) return reasonFor('mixed', t);
+  if (linkExpired(u)) return reasonFor('expired', t);
+  if (mediaCode === 3) return reasonFor('format', t);           // MEDIA_ERR_DECODE: it arrived but won't decode
+  const r = await reachable(t.url);
+  if (r === false) return reasonFor(PRIVATE_HOST(u.hostname) ? 'lan' : 'unreachable', t);
+  if (r === null) return reasonFor('unreachable', t);
+  if ([...u.searchParams.keys()].some(k => TOKEN_KEY.test(k))) return reasonFor('expired', t);
+  return reasonFor(site(t) ? 'locked' : 'refused', t);
+  function site(x) { return !!x.site; }
+}
+function markDead(t, why) {
+  const row = queue.find(x => x.url === t.url);
+  if (row) { row.dead = true; row.reason = why.text; row.reasonAct = why.act; renderQ({ noSync: true }); }
+}
+async function onMediaError(el, t) {
+  if (el !== audio) return;
+  const wasPlaying = playing;
+  const code = el.error ? el.error.code : 0;
+  if (extAlive && Date.now() - (t.__authAt || 0) > 60000) {
+    t.__authAt = Date.now();
+    showBanner(null, { text: 'Asking ' + siteOf(t) + ' for access…' }, false, true);
+    const r = await extCall('ext-authorize', { url: t.url, site: t.site, force: true });
+    // Retry only if this is still the current track, keyed by URL.
+    if (r && r.ok && r.authorized && el === audio && queue[idx] && queue[idx].url === t.url) { loadIdx(idx, { play: wasPlaying }); return; }
+  }
+  const why = await diagnose(t, code);
+  markDead(t, why);
+  if (el !== audio) return;                       // the user moved on meanwhile
+  const n = wasPlaying ? nextIndex() : -1;
+  if (n >= 0 && n !== idx && failStreak < queue.length) {
+    failStreak++;
+    showBanner(t, why, true);
+    loadIdx(n, { play: true, keepBanner: true });
+    return;
+  }
+  playing = false; paintPlay(); pumpProbes();
+  showBanner(t, why, false);
+}
 
-  q.innerHTML='';
-  rows.forEach(({t,i})=>{
-    const d=document.createElement('div');
-    d.className='qi'+(i===idx?' on':'')+(t.dead?' dead':'')+(i===idx&&!playing?' paused':'');
-    d.draggable=!f;                       // reordering while filtered would be misleading
-    d.dataset.idx=i;d.dataset.url=t.url;
+/* ===== ERROR BANNER ===== */
+function openPageFor(t) { const u = t.page || (t.site ? 'https://' + t.site + '/' : null); if (u) window.open(u, '_blank', 'noopener'); }
+function showBanner(t, why, skipped, busy) {
+  const bar = $('errbar'), acts = $('erracts');
+  $('err').textContent = t ? 'Couldn’t play ‘' + shortTitle(t.title) + '’: ' + why.text + '.' + (skipped ? ' Skipped to the next track.' : '') : why.text;
+  acts.textContent = '';
+  const add = (label, fn) => { const b = document.createElement('button'); b.className = 'btn-s'; b.textContent = label; b.onclick = fn; acts.appendChild(b); };
+  if (t && !busy) {
+    if (why.act === 'page' && (t.page || t.site)) add('Open page', () => openPageFor(t));
+    else if (why.act === 'link') add('Open link', () => window.open(t.url, '_blank', 'noopener'));
+    else if (why.act === 'retry') add('Retry', () => { const i = queue.findIndex(x => x.url === t.url); if (i >= 0) { queue[i].dead = false; playIdx(i); } });
+  }
+  bar.classList.toggle('busy', !!busy);
+  bar.classList.add('show'); $('err').classList.add('show');
+}
+function hideBanner() { $('errbar').classList.remove('show', 'busy'); $('err').classList.remove('show'); }
+$('errx').onclick = hideBanner;
 
-    const lead=i===idx?'<span class="eq"><i></i><i></i><i></i></span>':(i+1);
-    const dur=t.dead?'<span class="qi-badge">dead</span>'
-      :(t.dur?'<span class="qi-dur">'+fmt(t.dur)+'</span>':'<span class="qi-dur">–</span>');
-
-    const site=siteOf(t);
-    // Favicon comes straight from the source site, never a third-party favicon
-    // service — routing it through one would leak the whole queue to them.
-    // The lettered chip shows immediately and stays if the icon 404s.
-    const ico=site
-      ? '<span class="qi-site-ico" style="background:hsl('+siteHue(site)+' 42% 34%)">'
-        + esc(site[0]||'?')
-        + '<img src="https://'+esc(site)+'/favicon.ico" alt="" loading="lazy"'
-        + ' onload="this.parentNode.textContent=\'\';this.parentNode.appendChild(this)"'
-        + ' onerror="this.remove()">'
-        + '</span>'
-      : '';
-    let path='';
-    try{const u=new URL(t.url);path=u.pathname.split('/').pop()||u.pathname}catch(_){path=t.url}
-
-    d.innerHTML='<span class="qi-n">'+lead+'</span>'
-      +'<span class="qi-body"><span class="qi-name">'+esc(t.title)+'</span>'
-      +'<span class="qi-sub">'
-      + (site?'<span class="qi-site" title="Found on '+esc(site)+'">'+ico
-             +'<span class="qi-site-name">'+esc(site)+'</span></span>·':'')
-      +'<span class="qi-path">'+esc(path.slice(0,52))+'</span>'
-      +'</span></span>'
-      +dur
-      +'<span class="qi-acts">'
-      +'<button class="qi-act play" title="Play">'+ICO.pl+'</button>'
-      +'<button class="qi-act dl" title="Download">'+ICO.dl+'</button>'
-      +'<button class="qi-act rm" title="Remove">'+ICO.rm+'</button>'
-      +'</span>';
-
-    d.querySelector('.qi-body').onclick=()=>playIdx(i);
-    d.querySelector('.play').onclick=e=>{e.stopPropagation();playIdx(i)};
-    d.querySelector('.dl').onclick=e=>{e.stopPropagation();downloadTrack(i,e.currentTarget)};
-    d.querySelector('.rm').onclick=e=>{e.stopPropagation();removeTrack(i)};
-
-    d.addEventListener('dragstart',e=>{d.classList.add('dragging');e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',String(i))});
-    d.addEventListener('dragend',()=>{d.classList.remove('dragging');q.querySelectorAll('.qi').forEach(x=>x.classList.remove('dragover'))});
-    d.addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.dropEffect='move';d.classList.add('dragover')});
-    d.addEventListener('dragleave',()=>d.classList.remove('dragover'));
-    d.addEventListener('drop',e=>{
-      e.preventDefault();d.classList.remove('dragover');
-      const from=parseInt(e.dataTransfer.getData('text/plain'),10);
-      if(!isNaN(from))moveTrack(from,i);
-    });
-
-    if(t.dur===undefined&&!t.dead&&durObserver)durObserver.observe(d);
-    q.appendChild(d);
+/* ===== MEDIA SESSION ===== */
+function updateMediaSession() {
+  if (!('mediaSession' in navigator)) return;
+  const t = idx >= 0 ? queue[idx] : null;
+  try {
+    navigator.mediaSession.metadata = t ? new MediaMetadata({
+      title: t.title, artist: siteOf(t), album: 'BumbleTap Player',
+      artwork: [96, 256, 512].map(s => ({ src: artDataURL(t, s), sizes: s + 'x' + s, type: 'image/png' })).filter(a => a.src),
+    }) : null;
+  } catch (_) {}
+  posState();
+}
+function posState() {
+  if (!('mediaSession' in navigator)) return;
+  const ms = navigator.mediaSession;
+  try { ms.playbackState = !audio || idx < 0 || !audio.getAttribute('src') ? 'none' : (playing ? 'playing' : 'paused'); } catch (_) {}
+  if (!ms.setPositionState || !audio) return;
+  const d = audio.duration;
+  if (!isFinite(d) || d <= 0) return;
+  try { ms.setPositionState({ duration: d, playbackRate: audio.playbackRate || 1, position: Math.min(Math.max(0, audio.currentTime), d) }); } catch (_) {}
+}
+if ('mediaSession' in navigator) {
+  const set = (a, h) => { try { navigator.mediaSession.setActionHandler(a, h); } catch (_) {} };
+  // Route through the same paths as the buttons so `playing` and probes stay in sync.
+  set('play', () => { if (!playing) togglePlay(); });
+  set('pause', () => { if (playing) togglePlay(); });
+  set('stop', () => { if (audio) { playing = false; audio.pause(); try { audio.currentTime = 0; } catch (_) {} paintPlay(); paintTime(); } });
+  set('previoustrack', goPrev);
+  set('nexttrack', goNext);
+  set('seekbackward', d => seekBy(-((d && d.seekOffset) || 15)));
+  set('seekforward', d => seekBy((d && d.seekOffset) || 30));
+  set('seekto', d => {
+    if (!audio || !d || typeof d.seekTime !== 'number') return;
+    if (d.fastSeek && typeof audio.fastSeek === 'function') audio.fastSeek(d.seekTime); else audio.currentTime = d.seekTime;
+    paintTime(); posState();
   });
-
-  const a=q.querySelector('.on');if(a)a.scrollIntoView({block:'nearest'});
 }
-function updateVol(){if(!audio)return;$('vf').style.width=(audio.volume*100)+'%';$('vl').textContent=Math.round(audio.volume*100);const v=audio.volume;$('vi').innerHTML=audio.muted?'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>':v<.01?'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>':v<.5?'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>':'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>'}
 
-$('pp').onclick=togglePlay;
-$('prev').onclick=()=>{if(idx>0)playIdx(idx-1)};
-$('next').onclick=()=>{if(idx<queue.length-1)playIdx(idx+1)};
-$('seek').onclick=e=>{if(!audio||!isFinite(audio.duration))return;audio.currentTime=(e.offsetX/$('seek').offsetWidth)*audio.duration};
-$('vb').onclick=e=>{if(!audio)return;vol=Math.max(0,Math.min(1,e.offsetX/$('vb').offsetWidth));muted=false;audio.volume=vol;audio.muted=false;updateVol();savePrefs()};
-$('vi').onclick=()=>{if(!audio)return;audio.muted=!audio.muted;muted=audio.muted;updateVol();savePrefs()};
-$('spd').onclick=()=>{si=(si+1)%speeds.length;if(audio)audio.playbackRate=speeds[si];$('spd').textContent=speeds[si]+'×';savePrefs()};
-$('lp').onclick=()=>{looping=!looping;if(audio)audio.loop=looping;$('lp').classList.toggle('active',looping);savePrefs()};
-$('shuf').onclick=()=>{shuffling=!shuffling;$('shuf').classList.toggle('active',shuffling);savePrefs()};
-// Reflect restored preferences in the controls at load, before any track plays.
-$('lp').classList.toggle('active',looping);$('shuf').classList.toggle('active',shuffling);$('spd').textContent=speeds[si]+'×';
-$('vf').style.width=(muted?0:vol*100)+'%';$('vl').textContent=Math.round((muted?0:vol)*100);
-$('qclr').onclick=()=>{stopAudio();playing=false;queue.length=0;idx=-1;$('nt').textContent='No track loaded';$('ns').textContent='';$('pp').innerHTML=playIcon;$('nart').classList.remove('spin');renderQ()};
-$('addbtn').onclick=()=>{const u=$('urlin').value.trim();if(!u)return;const n=decodeURIComponent(u.split('/').pop().split('?')[0]).slice(0,60)||'Custom URL';addTrack(u,n);$('urlin').value=''};
-$('urlin').addEventListener('keydown',e=>{if(e.key==='Enter')$('addbtn').click()});
+/* ===== PAINT ===== */
+let nowKey = '';
+function setAccent(t) {
+  const tone = t ? toneOf(t) : DEFAULT_TONE, s = document.documentElement.style;
+  s.setProperty('--accent', tone);
+  s.setProperty('--on-accent', tone === '#E8B425' ? '#1A1405' : '#fff');
+}
+function paintNow() {
+  const empty = !queue.length, t = idx >= 0 ? queue[idx] : null;
+  document.body.classList.toggle('is-empty', empty);
+  setAccent(t);
+  const key = empty ? '-' : t ? [t.url, t.title, t.site, t.page].join('\n') : '+';
+  if (key === nowKey) return;
+  nowKey = key;
+  const ns = $('ns');
+  ns.textContent = '';
+  if (empty) { $('nart').innerHTML = ''; $('nt').textContent = ''; document.title = 'Playlist'; return; }
+  if (!t) {
+    $('nart').innerHTML = '<span class="art art-64 art-idle" aria-hidden="true">' + ICONS.note + '</span>';
+    $('nt').textContent = 'Nothing playing';
+    ns.textContent = 'Press play to start the queue';
+    document.title = 'Playlist';
+    return;
+  }
+  $('nart').innerHTML = artHTML(t, 'art-64');
+  $('nt').textContent = t.title;
+  const site = siteOf(t);
+  if (site && t.page) {
+    const a = document.createElement('a');
+    a.href = t.page; a.target = '_blank'; a.rel = 'noopener'; a.title = 'Open the page it came from';
+    a.textContent = 'from ' + site; ns.appendChild(a);
+  } else if (site) ns.textContent = 'from ' + site;
+  document.title = t.title + ' · Player';
+}
+function paintPlay() {
+  const pp = $('pp');
+  pp.innerHTML = playing ? ICONS.pause : ICONS.play;
+  pp.setAttribute('aria-label', playing ? 'Pause' : 'Play');
+  pp.title = (playing ? 'Pause' : 'Play') + ' (Space)';
+  document.body.classList.toggle('is-playing', playing);
+  posState();
+}
+function paintTime(previewFrac) {
+  const live = audio && audio.getAttribute('src');
+  const d = live && isFinite(audio.duration) ? audio.duration : NaN;
+  let c = live ? (audio.readyState < 1 && audio.__at ? audio.__at : audio.currentTime) : 0;
+  if (previewFrac != null && isFinite(d)) c = previewFrac * d;
+  const f = isFinite(d) && d > 0 ? clamp01(c / d) : 0;
+  $('tc').textContent = fmt(c);
+  $('td').textContent = fmt(d);
+  $('sf').style.width = f * 100 + '%';
+  $('sthumb').style.left = f * 100 + '%';
+  const s = $('seek');
+  s.classList.toggle('off', !isFinite(d));
+  s.setAttribute('aria-valuemax', isFinite(d) ? Math.round(d) : 0);
+  s.setAttribute('aria-valuenow', Math.round(c));
+  s.setAttribute('aria-valuetext', fmt(c) + (isFinite(d) ? ' of ' + fmt(d) : ''));
+}
+function paintCtrls() {
+  const has = queue.length > 0, cur = idx >= 0;
+  $('pp').disabled = !has; $('prev').disabled = !has; $('next').disabled = !has;
+  $('back').disabled = !cur; $('fwd').disabled = !cur;
+  $('shuf').classList.toggle('on', shuffling); $('shuf').setAttribute('aria-pressed', String(shuffling));
+  const rl = ['Repeat: off', 'Repeat: all', 'Repeat: this track'][repeatMode];
+  $('lp').classList.toggle('on', repeatMode > 0); $('lp').setAttribute('aria-label', rl); $('lp').title = rl;
+  $('lp1').hidden = repeatMode !== 2;
+  const sl = rate + '×';
+  $('spd').textContent = sl; $('spd').setAttribute('aria-label', 'Playback speed ' + sl); $('spd').classList.toggle('on', rate !== 1);
+}
+function paintVol() {
+  $('vf').style.width = vol * 100 + '%'; $('vthumb').style.left = vol * 100 + '%';
+  $('vl').textContent = Math.round(vol * 100);
+  const vb = $('vb');
+  vb.classList.toggle('muted', muted);
+  vb.setAttribute('aria-valuenow', Math.round(vol * 100));
+  vb.setAttribute('aria-valuetext', muted ? 'Muted' : Math.round(vol * 100) + '%');
+  const vi = $('vi');
+  vi.innerHTML = muted || vol < .01 ? ICONS.volOff : vol < .5 ? ICONS.volLow : ICONS.vol;
+  vi.setAttribute('aria-label', muted ? 'Unmute' : 'Mute'); vi.title = muted ? 'Unmute' : 'Mute';
+  if (audio) { audio.volume = vol; audio.muted = muted; }
+}
+function paintAll() { paintNow(); paintPlay(); paintTime(); paintCtrls(); }
 
-// ===== EXPORT / IMPORT =====
-function qToast(msg) {
-  const old = document.querySelector('.qa-toast');
-  if (old) old.remove();
+/* ===== QUEUE RENDERING ===== */
+let filterText = '', filterOpen = false, lastScrolled = null;
+
+/* Durations load lazily as rows scroll into view, a few at a time, never while
+   a track plays (each probe opens a connection that competes with the stream)
+   and never while hidden (hidden tabs throttle the timeouts). */
+const MAX_PROBES = 3, PROBE_TIMEOUT = 8000;
+let probesActive = 0; const probeQueue = [];
+const probeAborts = new Set();
+function pumpProbes() {
+  if (document.hidden || playing) return;
+  while (probesActive < MAX_PROBES && probeQueue.length) runProbe(probeQueue.shift());
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  document.querySelectorAll('.qi').forEach(r => {
+    const t = queue.find(x => x.url === r.dataset.url);
+    if (t && t.dur === undefined && !probeQueue.includes(t.url)) probeQueue.push(t.url);
+  });
+  pumpProbes();
+});
+function runProbe(url) {
+  const t = queue.find(x => x.url === url);
+  if (!t || t.dur !== undefined) { pumpProbes(); return; }
+  probesActive++;
+  const probe = new Audio();
+  probe.preload = 'metadata';
+  let done = false;
+  const settle = () => { done = true; clearTimeout(timer); probesActive--; probeAborts.delete(abort); try { probe.removeAttribute('src'); probe.load(); } catch (_) {} };
+  const finish = (dur, dead, code) => {
+    if (done) return;
+    settle();
+    t.dur = dur;
+    if (dead) { t.dead = true; diagnose(t, code).then(why => { if (t.dead) { t.reason = why.text; t.reasonAct = why.act; renderQ({ noSync: true }); } }); }
+    renderQ(); pumpProbes();
+  };
+  // Playback starting reclaims the connection: release without a result and re-queue.
+  const abort = () => { if (done) return; settle(); if (!probeQueue.includes(url)) probeQueue.push(url); };
+  probeAborts.add(abort);
+  // A slow host is an unknown duration, not a dead track.
+  const timer = setTimeout(() => finish(null, false), PROBE_TIMEOUT);
+  probe.addEventListener('loadedmetadata', () => finish(isFinite(probe.duration) ? probe.duration : null, false), { once: true });
+  probe.addEventListener('error', () => finish(null, true, probe.error && probe.error.code), { once: true });
+  probe.src = url;
+}
+const durObserver = ('IntersectionObserver' in window) ? new IntersectionObserver(entries => {
+  entries.forEach(en => {
+    if (!en.isIntersecting) return;
+    durObserver.unobserve(en.target);
+    const url = en.target.dataset.url;
+    if (!probeQueue.includes(url)) probeQueue.push(url);
+  });
+  pumpProbes();
+}, { rootMargin: '120px' }) : null;
+
+function refreshPlayingRow() { document.body.classList.toggle('is-playing', playing); }
+
+// noSync: for redraws that don't change state (filtering, dead flags).
+function renderQ(opts) {
+  if (!opts || !opts.noSync) syncState();
+  const q = $('q');
+  $('qc').textContent = queue.length;
+  paintNow(); paintCtrls();
+  if (!queue.length) { q.innerHTML = '<p class="qempty">Tracks you add line up here.</p>'; lastScrolled = null; return; }
+  const f = filterText.trim().toLowerCase();
+  const rows = queue.map((t, i) => ({ t, i })).filter(({ t }) => !f || (t.title || '').toLowerCase().includes(f) || t.url.toLowerCase().includes(f) || siteOf(t).toLowerCase().includes(f));
+  if (!rows.length) { q.innerHTML = '<p class="qempty">No tracks match “' + esc(filterText.trim()) + '”</p>'; return; }
+
+  const frag = document.createDocumentFragment();
+  rows.forEach(({ t, i }) => {
+    const d = document.createElement('div');
+    const on = i === idx;
+    d.className = 'qi' + (on ? ' on' : '') + (t.dead ? ' dead' : '');
+    d.setAttribute('role', 'listitem');
+    d.draggable = !f;                           // reordering a filtered view would mislead
+    d.dataset.idx = i; d.dataset.url = t.url;
+    const site = siteOf(t);
+    const meta = (t.dead ? '<span class="tag" title="' + esc('Can’t play: ' + (t.reason || 'it failed to load here')) + '">Can’t play</span>' : '')
+      + (site ? 'from ' + esc(site) : '') + (t.dur ? (site ? ' · ' : '') + '<span class="d">' + fmt(t.dur) + '</span>' : '');
+    d.innerHTML = '<div class="qi-main" role="button" tabindex="0" aria-current="' + (on ? 'true' : 'false') + '" aria-label="' + esc((on ? 'Now playing: ' : 'Play ') + t.title + (t.dead ? '. Can’t play: ' + (t.reason || '') : '')) + '">'
+      + artHTML(t, 'art-28', on ? '<span class="eq"><i></i><i></i><i></i></span>' : '')
+      + '<span class="qi-text"><span class="qi-title">' + esc(t.title) + '</span><span class="qi-sub">' + meta + '</span></span></div>'
+      + '<span class="qi-acts">'
+      + (t.dead ? '<button class="retry" title="Try this track again">Retry</button>' : '')
+      + '<button class="ib dl" aria-label="Download ' + esc(t.title) + '" title="Download">' + ICONS.dl + '</button>'
+      + '<button class="ib rm" aria-label="Remove ' + esc(t.title) + '" title="Remove">' + ICONS.x + '</button></span>';
+    const main = d.querySelector('.qi-main');
+    const act = () => { if (i === idx && audio && audio.getAttribute('src') && !audio.error) { if (!playing) togglePlay(); } else playIdx(i); };
+    main.onclick = act;
+    main.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(); } else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); removeTrack(i); } };
+    const rt = d.querySelector('.retry');
+    if (rt) rt.onclick = e => { e.stopPropagation(); t.dead = false; t.reason = null; playIdx(i); };
+    d.querySelector('.rm').onclick = e => { e.stopPropagation(); removeTrack(i); };
+    d.querySelector('.dl').onclick = e => { e.stopPropagation(); downloadTrack(i, e.currentTarget); };
+    // The file's own address on hover, as 2.x showed under each title.
+    main.title = t.url;
+    d.addEventListener('dragstart', e => { d.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(i)); });
+    d.addEventListener('dragend', () => { d.classList.remove('dragging'); q.querySelectorAll('.qi').forEach(x => x.classList.remove('dragover')); });
+    d.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; d.classList.add('dragover'); });
+    d.addEventListener('dragleave', () => d.classList.remove('dragover'));
+    d.addEventListener('drop', e => {
+      e.preventDefault(); d.classList.remove('dragover');
+      const from = parseInt(e.dataTransfer.getData('text/plain'), 10);
+      if (!isNaN(from)) moveTrack(from, i);
+    });
+    if (t.dur === undefined && !t.dead && durObserver) durObserver.observe(d);
+    frag.appendChild(d);
+  });
+  q.textContent = '';
+  q.appendChild(frag);
+  // Bring the current row into view when the track changes, not on every redraw.
+  const curUrl = idx >= 0 && queue[idx] ? queue[idx].url : null;
+  if (curUrl !== lastScrolled) { lastScrolled = curUrl; const a = q.querySelector('.qi.on'); if (a) a.scrollIntoView({ block: 'nearest' }); }
+}
+
+/* ===== CONTROLS ===== */
+$('pp').onclick = togglePlay;
+$('prev').onclick = goPrev;
+$('next').onclick = goNext;
+$('back').onclick = () => seekBy(-15);
+$('fwd').onclick = () => seekBy(30);
+$('shuf').onclick = () => { shuffling = !shuffling; if (shuffling) resetShuffle(); paintCtrls(); savePrefs(); };
+$('lp').onclick = () => { repeatMode = (repeatMode + 1) % 3; if (audio) audio.loop = repeatMode === 2; paintCtrls(); savePrefs(); };
+$('spd').onclick = () => { rate = SPEEDS[(SPEEDS.indexOf(rate) + 1) % SPEEDS.length]; if (audio) { audio.defaultPlaybackRate = rate; audio.playbackRate = rate; } paintCtrls(); savePrefs(); };
+$('vi').onclick = () => { muted = !muted; if (!muted && vol < .01) vol = .5; paintVol(); savePrefs(); };
+function setVol(v) { vol = Math.round(clamp01(v) * 100) / 100; muted = false; paintVol(); savePrefs(); }
+
+// Pointer-driven sliders: the value follows the pointer while dragging and the
+// release point wins. The volume one works with or without a track loaded.
+function slider(el, { canStart, preview, commit }) {
+  let drag = false;
+  const frac = e => { const r = el.getBoundingClientRect(); return clamp01((e.clientX - r.left) / r.width); };
+  el.addEventListener('pointerdown', e => {
+    if (e.button !== 0 || !canStart()) return;
+    drag = true; el.classList.add('drag');
+    try { el.setPointerCapture(e.pointerId); } catch (_) {}
+    preview(frac(e));
+    e.preventDefault();
+  });
+  el.addEventListener('pointermove', e => { if (drag) preview(frac(e)); });
+  const end = ok => e => { if (!drag) return; drag = false; el.classList.remove('drag'); commit(ok ? frac(e) : null); };
+  el.addEventListener('pointerup', end(true));
+  el.addEventListener('pointercancel', end(false));
+  el.addEventListener('lostpointercapture', () => { if (drag) { drag = false; el.classList.remove('drag'); commit(null); } });
+}
+slider($('seek'), {
+  canStart: () => !!(audio && audio.getAttribute('src') && isFinite(audio.duration)),
+  preview: f => { seekDrag = true; paintTime(f); },
+  commit: f => { seekDrag = false; if (f != null && audio && isFinite(audio.duration)) { try { audio.currentTime = f * audio.duration; } catch (_) {} } paintTime(); posState(); },
+});
+slider($('vb'), { canStart: () => true, preview: f => setVol(f), commit: f => { if (f != null) setVol(f); } });
+$('seek').addEventListener('keydown', e => {
+  if (e.key === 'Home') { e.preventDefault(); if (audio) audio.currentTime = 0; paintTime(); }
+  else if (e.key === 'End') { e.preventDefault(); if (audio && isFinite(audio.duration)) seekBy(audio.duration); }
+  else if (e.key === 'PageUp') { e.preventDefault(); seekBy(30); }
+  else if (e.key === 'PageDown') { e.preventDefault(); seekBy(-15); }
+});
+$('vb').addEventListener('keydown', e => {
+  const k = e.key, step = { ArrowRight: .05, ArrowUp: .05, ArrowLeft: -.05, ArrowDown: -.05, PageUp: .2, PageDown: -.2 }[k];
+  if (step !== undefined) { e.preventDefault(); e.stopPropagation(); setVol(vol + step); }
+  else if (k === 'Home' || k === 'End') { e.preventDefault(); e.stopPropagation(); setVol(k === 'End' ? 1 : 0); }
+});
+
+/* ===== ADD A LINK ===== */
+const linkOk = s => { s = String(s || '').trim(); if (!/^https?:\/\/\S+$/i.test(s)) return false; try { new URL(s); return true; } catch (_) { return false; } };
+function submitLink() {
+  const u = $('urlin').value.trim();
+  if (!linkOk(u)) { $('urlin').focus(); return; }
+  if (!addTrack(u, deriveTitle(u), null)) qToast('That link is already in the queue');
+  $('urlin').value = ''; $('addbtn').disabled = true;
+}
+$('urlin').addEventListener('input', () => { $('addbtn').disabled = !linkOk($('urlin').value); });
+$('urlin').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); submitLink(); } });
+$('addbtn').onclick = submitLink;
+
+/* ===== FILTER ===== */
+function toggleFilter(on) {
+  filterOpen = on;
+  $('qhead').classList.toggle('filtering', on);
+  const b = $('qfbtn');
+  b.innerHTML = on ? ICONS.x : ICONS.filter;
+  b.setAttribute('aria-expanded', String(on)); b.setAttribute('aria-label', on ? 'Close filter' : 'Filter the queue');
+  b.title = on ? 'Close filter (Esc)' : 'Filter (/)';
+  if (on) $('qfilter').focus();
+  else if (filterText) { filterText = ''; $('qfilter').value = ''; renderQ({ noSync: true }); }
+}
+$('qfbtn').onclick = () => toggleFilter(!filterOpen);
+$('qfilter').addEventListener('input', e => { filterText = e.target.value; renderQ({ noSync: true }); });
+$('qfilter').addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Escape') { toggleFilter(false); $('qfbtn').focus(); } });
+
+/* ===== TOASTS ===== */
+let toastT = null;
+/* Save one track. A direct fetch keeps the title as the file name; a host that
+   blocks it (no CORS) gets the link opened instead, so the browser can save it. */
+async function downloadTrack(i, btn) {
+  const t = queue[i]; if (!t) return;
+  const ext = (t.url.split(/[?#]/)[0].split('.').pop() || 'mp3').slice(0, 4);
+  const safe = (t.title || 'audio').replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim().slice(0, 80);
+  const name = /\.[a-z0-9]{2,4}$/i.test(safe) ? safe : safe + '.' + ext;
+  if (btn) btn.classList.add('busy');
+  try {
+    const res = await fetch(t.url, { mode: 'cors' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const href = URL.createObjectURL(await res.blob());
+    const a = document.createElement('a'); a.href = href; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(href), 10000);
+    qToast('Downloaded ' + name);
+  } catch (_) {
+    const a = document.createElement('a');
+    a.href = t.url; a.download = name; a.target = '_blank'; a.rel = 'noopener';
+    document.body.appendChild(a); a.click(); a.remove();
+    qToast('Opened in a new tab: this site blocks direct downloads');
+  } finally { if (btn) btn.classList.remove('busy'); }
+}
+
+function qToast(msg, o) {
+  const box = $('toasts');
+  clearTimeout(toastT);
+  box.textContent = '';
   const t = document.createElement('div');
-  t.className = 'qa-toast';
-  t.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#5ac8fa" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>' + msg;
-  document.body.appendChild(t);
-  setTimeout(() => t.remove(), 2200);
+  t.className = 'toast';
+  const s = document.createElement('span'); s.textContent = msg; t.appendChild(s);
+  if (o && o.action) {
+    const b = document.createElement('button'); b.textContent = o.action;
+    b.onclick = () => { box.textContent = ''; clearTimeout(toastT); o.run(); };
+    t.appendChild(b);
+  }
+  box.appendChild(t);
+  toastT = setTimeout(() => { box.textContent = ''; }, o && o.action ? 6000 : 2600);
 }
+
+/* ===== MENU ===== */
+const menu = $('menu'), menuBtn = $('menubtn');
+function openMenu() {
+  const empty = !queue.length;
+  ['qexjson', 'qexm3u', 'qcopy', 'qclr'].forEach(id => { $(id).disabled = empty; });
+  menu.hidden = false; menuBtn.setAttribute('aria-expanded', 'true');
+  const first = menu.querySelector('.mi:not(:disabled)'); if (first) first.focus();
+}
+function closeMenu(refocus) {
+  if (menu.hidden) return;
+  menu.hidden = true; menuBtn.setAttribute('aria-expanded', 'false');
+  if (refocus) menuBtn.focus();
+}
+menuBtn.onclick = () => (menu.hidden ? openMenu() : closeMenu());
+document.addEventListener('pointerdown', e => { if (!menu.hidden && !e.target.closest('.menuwrap')) closeMenu(); });
+menu.addEventListener('keydown', e => {
+  const items = [...menu.querySelectorAll('.mi:not(:disabled)')], i = items.indexOf(document.activeElement);
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); const n = items.length; items[(i + (e.key === 'ArrowDown' ? 1 : -1) + n) % n].focus(); }
+  else if (e.key === 'Home' || e.key === 'End') { e.preventDefault(); items[e.key === 'Home' ? 0 : items.length - 1].focus(); }
+  else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMenu(true); }
+  else if (e.key === 'Tab') closeMenu();
+});
+const menuAction = fn => () => { closeMenu(true); fn(); };
 
 function downloadFile(name, content, type) {
-  const blob = new Blob([content], { type });
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
+  a.href = URL.createObjectURL(new Blob([content], { type }));
   a.download = name;
-  a.click();
-  URL.revokeObjectURL(a.href);
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 }
-
-// Export JSON — full data (title + url)
-$('qexjson').onclick = () => {
+const stamp = () => new Date().toISOString().slice(0, 10);
+const nTracks = n => n + (n === 1 ? ' track' : ' tracks');
+$('qexjson').onclick = menuAction(() => {
   if (!queue.length) return;
-  const data = { exported: new Date().toISOString(), tracks: queue.map(t => ({ title: t.title, url: t.url })) };
-  downloadFile('audio-queue-' + Date.now() + '.json', JSON.stringify(data, null, 2), 'application/json');
-  qToast('Exported ' + queue.length + ' tracks as JSON');
-};
-
-// Export M3U — playlist format compatible with VLC, foobar, etc.
-$('qexm3u').onclick = () => {
+  const data = { exported: new Date().toISOString(), tracks: queue.map(t => ({ title: t.title, url: t.url, site: t.site || undefined, page: t.page || undefined })) };
+  downloadFile('audio-queue-' + stamp() + '.json', JSON.stringify(data, null, 2), 'application/json');
+  qToast('Exported ' + nTracks(queue.length) + ' as JSON');
+});
+$('qexm3u').onclick = menuAction(() => {
   if (!queue.length) return;
   let m3u = '#EXTM3U\n';
-  queue.forEach(t => { m3u += '#EXTINF:-1,' + t.title + '\n' + t.url + '\n'; });
-  downloadFile('audio-queue-' + Date.now() + '.m3u', m3u, 'audio/x-mpegurl');
-  qToast('Exported ' + queue.length + ' tracks as M3U');
-};
-
-// Copy all URLs to clipboard
-$('qcopy').onclick = () => {
+  queue.forEach(t => { m3u += '#EXTINF:' + (t.dur ? Math.round(t.dur) : -1) + ',' + t.title.replace(/[\r\n]+/g, ' ') + '\n' + t.url + '\n'; });
+  downloadFile('audio-queue-' + stamp() + '.m3u', m3u, 'audio/x-mpegurl');
+  qToast('Exported ' + nTracks(queue.length) + ' as M3U');
+});
+$('qcopy').onclick = menuAction(() => {
   if (!queue.length) return;
-  const text = queue.map(t => t.url).join('\n');
-  navigator.clipboard.writeText(text).then(() => qToast('Copied ' + queue.length + ' URLs'));
-};
+  navigator.clipboard.writeText(queue.map(t => t.url).join('\n'))
+    .then(() => qToast('Copied ' + queue.length + (queue.length === 1 ? ' link' : ' links')), () => qToast('Couldn’t copy. The browser blocked the clipboard.'));
+});
+$('qimport').onclick = menuAction(() => $('qfile').click());
+$('qclr').onclick = menuAction(clearQueue);
 
-// Import — JSON or M3U or plain URL list
-$('qimport').onclick = () => $('qfile').click();
+// Import: JSON, M3U, or a plain list of links. Never autoplays.
 $('qfile').onchange = e => {
   const file = e.target.files[0];
   if (!file) return;
   const reader = new FileReader();
   reader.onload = ev => {
-    const text = ev.target.result;
-    let added = 0;
-
-    // Try JSON
+    const text = String(ev.target.result || '');
+    const found = [];
     try {
-      const json = JSON.parse(text);
-      const tracks = json.tracks || json;
-      if (Array.isArray(tracks)) {
-        tracks.forEach(t => {
-          const url = t.url || t.src || t.path;
-          const title = t.title || t.name || '';
-          if (url) { addTrack(url, title || decodeURIComponent(url.split('/').pop().split('?')[0]).slice(0, 60)); added++; }
-        });
-        if (added) { qToast('Imported ' + added + ' tracks from JSON'); $('qfile').value = ''; return; }
-      }
-    } catch {}
-
-    // Try M3U
-    if (text.includes('#EXTM3U') || text.includes('#EXTINF') || file.name.endsWith('.m3u') || file.name.endsWith('.m3u8')) {
-      const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-      let nextTitle = '';
-      lines.forEach(line => {
-        if (line.startsWith('#EXTINF:')) {
-          nextTitle = line.split(',').slice(1).join(',').trim();
-        } else if (line.startsWith('http') || line.startsWith('//')) {
-          addTrack(line, nextTitle || decodeURIComponent(line.split('/').pop().split('?')[0]).slice(0, 60));
-          nextTitle = '';
-          added++;
-        }
+      const json = JSON.parse(text), list = json.tracks || json;
+      if (Array.isArray(list)) list.forEach(t => { const u = t && (t.url || t.src || t.path); if (isHttpUrl(u)) found.push({ url: u, title: t.title || t.name || '', site: typeof t.site === 'string' ? t.site : null, page: t.page }); });
+    } catch (_) {}
+    if (!found.length) {
+      let next = '';
+      text.split(/\r?\n/).map(l => l.trim()).filter(Boolean).forEach(line => {
+        if (line.startsWith('#EXTINF:')) next = line.split(',').slice(1).join(',').trim();
+        else if (isHttpUrl(line)) { found.push({ url: line, title: next }); next = ''; }
       });
-      if (added) { qToast('Imported ' + added + ' tracks from M3U'); $('qfile').value = ''; return; }
     }
-
-    // Try plain URL list (one per line)
-    const lines = text.split('\n').map(l => l.trim()).filter(l => l.startsWith('http') || l.startsWith('//'));
-    lines.forEach(url => { addTrack(url, decodeURIComponent(url.split('/').pop().split('?')[0]).slice(0, 60)); added++; });
-    if (added) { qToast('Imported ' + added + ' URLs'); }
-    else { qToast('No valid tracks found in file'); }
+    let added = 0;
+    found.forEach(t => { if (addTrack(t.url, t.title || deriveTitle(t.url), t.site, { page: t.page, noPlay: true })) added++; });
+    qToast(!found.length ? 'No audio links found in that file' : added ? 'Imported ' + nTracks(added) + (found.length > added ? ' (' + (found.length - added) + ' already queued)' : '') : 'Those tracks are already in the queue');
     $('qfile').value = '';
   };
   reader.readAsText(file);
 };
 
-// ===== QR ENCODER (self-contained, byte mode, EC level L) =====
-// Written inline because site CSP blocks CDN scripts inside this popup.
+/* ===== QR ENCODER (self-contained, byte mode, EC level L) =====
+   Inline because site CSP blocks CDN scripts inside this popup. */
 var QT=[0,26,44,70,100,134,172,196,242,292,346,404,466,532,581,655,733,815,901,991,1085,1156,1258,1364,1474,1588,1706,1828,1921,2051,2185,2323,2465,2611,2761,2876,3034,3196,3362,3532,3706];
 var QE=[0,7,10,15,20,26,18,20,24,30,18,20,24,26,30,22,24,28,30,28,28,28,28,30,30,26,28,30,30,30,30,30,30,30,30,30,30,30,30,30,30];
 var QB=[0,1,1,1,1,1,2,2,2,2,4,4,4,4,4,6,6,6,6,7,8,8,9,9,10,12,12,12,13,14,15,16,17,18,19,19,20,21,22,24,25];
@@ -1105,247 +1545,285 @@ function qrMatrix(str){
   }
   return {m:best,n:n};
 }
-function drawQR(text){
-  var box=$('qrbox');
-  box.innerHTML='';
-  var q=qrMatrix(text);
-  if(!q){box.innerHTML='<div style="padding:36px;color:#888;font-size:12px;font-family:sans-serif">Queue too large for a QR code</div>';return false;}
-  // Scale modules to the window so the code stays scannable
-  var avail=Math.min(window.innerWidth,window.innerHeight)-120;
-  var quiet=3,total=q.n+quiet*2,px=Math.max(2,Math.floor(Math.max(200,avail)/total)),size=total*px;
-  var cv=document.createElement('canvas');
-  cv.width=size;cv.height=size;cv.style.width=size+'px';cv.style.height=size+'px';cv.style.display='block';cv.style.borderRadius='4px';
-  var cx=cv.getContext('2d');
-  cx.fillStyle='#fff';cx.fillRect(0,0,size,size);
-  cx.fillStyle='#000';
-  for(var i=0;i<q.n;i++)for(var j=0;j<q.n;j++)if(q.m[i][j])cx.fillRect((j+quiet)*px,(i+quiet)*px,px,px);
+// Crisp modules: a whole number of device pixels each, sized to the window.
+function drawQR(text) {
+  const box = $('qrbox');
+  box.textContent = '';
+  const q = qrMatrix(text);
+  if (!q) { box.innerHTML = '<p class="qr-msg">This link is too long for a code. Use Copy link instead.</p>'; return false; }
+  const quiet = 3, total = q.n + quiet * 2;
+  const avail = Math.max(170, Math.min(innerWidth - 60, innerHeight - 300, 380));
+  const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+  const px = Math.max(2, Math.floor(avail * dpr / total));
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = total * px;
+  cv.style.width = cv.style.height = (total * px / dpr) + 'px';
+  cv.setAttribute('role', 'img'); cv.setAttribute('aria-label', 'QR code for your phone');
+  const cx = cv.getContext('2d');
+  cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height);
+  cx.fillStyle = '#000';
+  for (let i = 0; i < q.n; i++) for (let j = 0; j < q.n; j++) if (q.m[i][j]) cx.fillRect((j + quiet) * px, (i + quiet) * px, px, px);
   box.appendChild(cv);
   return true;
 }
 
-// ===== SEND TO PHONE =====
-var RECEIVER='https://umershahzeb02.github.io/bumbletap/scripts/audio-player/mobile-player.html';
-// Kept low on purpose: a phone camera can't read a 170-module code reliably.
-// Anything bigger goes out via Copy link instead.
-var QR_MAX=760;
-var sheetLink='';
+/* ===== SEND TO PHONE =====
+   Format v2 (mobile-player.html decodes both):
+     #v=2&d=<base64url(deflate-raw(UTF-8 JSON))>  [&s=<sid>&c=<k>&n=<N> when split]
+     JSON {b: common URL prefix, t: [[title, url suffix, site or ''], …],
+           i: current index in this part or -1, p: position of the current track (whole seconds) or 0}
+   The whole queue goes, in order, including tracks before the current one.
+   Format v1 (#q=<base64url(JSON {b, t:[[title, suffix]]})>) is the fallback for a
+   browser without CompressionStream('deflate-raw'); it can't carry the current
+   track, so like before it starts from the current track. */
+const RECEIVER = 'https://umershahzeb02.github.io/bumbletap/scripts/audio-player/mobile-player.html';
+// Kept low on purpose: a phone camera can't read a huge code reliably. Anything
+// bigger goes out over Copy link instead.
+const QR_MAX = 760, HDR_RESERVE = 20, CYCLE_MS = 900;
+const CAN_DEFLATE = (() => { try { return typeof CompressionStream === 'function' && !!new CompressionStream('deflate-raw'); } catch (_) { return false; } })();
+let sheetLink = '', xfer = null, cycleT = null, sheetGen = 0, sheetResized = null, sheetReturn = null;
 
-function b64url(s){
-  var u=unescape(encodeURIComponent(s));
-  return btoa(u).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+function commonPrefix(urls) {
+  let pre = urls.length ? urls[0] : '';
+  for (let i = 1; i < urls.length && pre; i++) { let j = 0; while (j < pre.length && j < urls[i].length && pre[j] === urls[i][j]) j++; pre = pre.slice(0, j); }
+  return pre;
 }
-function encodeQueue(list){
-  // Fold the shared URL prefix out — audio URLs from one host overlap heavily
-  var urls=list.map(function(t){return t.url;});
-  var pre=urls.length?urls[0]:'';
-  for(var i=1;i<urls.length;i++){
-    var j=0;
-    while(j<pre.length&&j<urls[i].length&&pre.charAt(j)===urls[i].charAt(j))j++;
-    pre=pre.slice(0,j);
-    if(!pre)break;
+function b64url(s) { return btoa(unescape(encodeURIComponent(s))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+function b64urlBytes(bytes) {
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+async function deflateRaw(text) {
+  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+const xferSid = () => Math.random().toString(36).slice(2, 6);
+const header = (sid, c, n) => n > 1 ? '&s=' + sid + '&c=' + c + '&n=' + n : '';
+
+// v1
+function buildLinkV1(list, sid, c, n) {
+  const pre = commonPrefix(list.map(t => t.url));
+  return RECEIVER + '#q=' + b64url(JSON.stringify({ b: pre, t: list.map(t => [t.title || '', t.url.slice(pre.length)]) })) + header(sid, c, n);
+}
+// Greedy packing; a track whose own link is over the limit rides Copy link only.
+function chunkQueueV1(all) {
+  const cap = QR_MAX - HDR_RESERVE, chunks = [], oversize = []; let cur = [];
+  for (const t of all) {
+    if (buildLinkV1([t], null, 1, 1).length > cap) { oversize.push(t); continue; }
+    const trial = cur.concat([t]);
+    if (cur.length && buildLinkV1(trial, null, 1, 1).length > cap) { chunks.push(cur); cur = [t]; } else cur = trial;
   }
-  var payload={b:pre,t:list.map(function(t){return [t.title||'',t.url.slice(pre.length)];})};
-  return b64url(JSON.stringify(payload));
+  if (cur.length) chunks.push(cur);
+  return { chunks, oversize };
 }
 
-// A multi-part handoff tags each code with the transfer's session id, this
-// code's position, and the total. A single code (n=1) carries no header at all,
-// so it stays byte-for-byte the link the receiver has always understood.
-function buildLink(list,sid,c,n){
-  var url=RECEIVER+'#q='+encodeQueue(list);
-  if(n>1)url+='&s='+sid+'&c='+c+'&n='+n;
-  return url;
+// v2
+function payloadV2(list, cur, pos) {
+  const pre = commonPrefix(list.map(t => t.url));
+  return { b: pre, t: list.map(t => [t.title || '', t.url.slice(pre.length), t.site || '']), i: cur, p: cur >= 0 ? Math.max(0, Math.floor(pos || 0)) : 0 };
 }
-
-// Short id grouping the parts of one transfer, so the phone knows which codes
-// belong together and never mixes two handoffs.
-function xferSid(){return Math.random().toString(36).slice(2,6);}
-
-/* Split the queue into as few codes as fit, packing greedily: keep adding
-   tracks to the current code until one more would push it over the scannable
-   limit, then start a fresh one. Budget against QR_MAX minus a small reserve
-   for the "&s=..&c=..&n=.." header, which only a multi-part code carries — that
-   way a queue that fits one code is never needlessly split by phantom overhead.
-   A single track whose own URL already blows the limit (expiring tokened stream
-   links run ~1KB) can ride no QR at all; it is set aside for Copy link rather
-   than silently dropped, which is what the old trim loop did. */
-var HDR_RESERVE=20;
-function chunkQueue(all){
-  var cap=QR_MAX-HDR_RESERVE,chunks=[],oversize=[],cur=[];
-  for(var k=0;k<all.length;k++){
-    var t=all[k];
-    if(buildLink([t],null,1,1).length>cap){oversize.push(t);continue;}
-    var trial=cur.concat([t]);
-    if(cur.length&&buildLink(trial,null,1,1).length>cap){chunks.push(cur);cur=[t];}
-    else cur=trial;
+async function buildLinkV2(list, cur, pos, sid, c, n) {
+  return RECEIVER + '#v=2&d=' + b64urlBytes(await deflateRaw(JSON.stringify(payloadV2(list, cur, pos)))) + header(sid, c, n);
+}
+/* Contiguous parts, each as long as fits. Compressed size grows with the run,
+   so gallop to bracket the longest run that fits and binary-search inside it:
+   about a dozen compressions per code instead of one per track. */
+async function chunkQueueV2(all, cur, pos) {
+  const cap = QR_MAX - HDR_RESERVE, n = all.length, parts = [], oversize = [];
+  const fits = async (a, b) => {
+    const ci = cur >= a && cur < b ? cur - a : -1;
+    return (await buildLinkV2(all.slice(a, b), ci, ci >= 0 ? pos : 0, null, 1, 1)).length <= cap;
+  };
+  let s = 0;
+  while (s < n) {
+    if (!(await fits(s, s + 1))) { oversize.push(all[s]); s++; continue; }
+    let lo = 1, hi = 0, size = 2;
+    while (size <= n - s) { if (await fits(s, s + size)) { lo = size; size *= 2; } else { hi = size; break; } }
+    if (!hi) { if (lo < n - s && await fits(s, n)) lo = n - s; hi = lo === n - s ? lo + 1 : n - s; }
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (await fits(s, s + mid)) lo = mid; else hi = mid; }
+    parts.push({ start: s, end: s + lo });
+    s += lo;
   }
-  if(cur.length)chunks.push(cur);
-  return {chunks:chunks,oversize:oversize};
+  return { parts, oversize };
+}
+async function handoffV2(all, cur, pos) {
+  const split = await chunkQueueV2(all, cur, pos), sid = xferSid(), n = split.parts.length, parts = [];
+  for (let k = 0; k < n; k++) {
+    const p = split.parts[k], list = all.slice(p.start, p.end), ci = cur >= p.start && cur < p.end ? cur - p.start : -1;
+    parts.push({ tracks: list, link: await buildLinkV2(list, ci, ci >= 0 ? pos : 0, sid, k + 1, n) });
+  }
+  return { v: 2, parts, oversize: split.oversize, copy: await buildLinkV2(all, cur, pos, null, 1, 1) };
+}
+function handoffV1(all, cur) {
+  const list = all.slice(cur > 0 ? cur : 0), split = chunkQueueV1(list), sid = xferSid(), n = split.chunks.length;
+  return { v: 1, parts: split.chunks.map((ch, k) => ({ tracks: ch, link: buildLinkV1(ch, sid, k + 1, n) })), oversize: split.oversize, copy: buildLinkV1(list, null, 1, 1) };
+}
+async function buildHandoff(all, cur, pos) {
+  if (CAN_DEFLATE) { try { return await handoffV2(all, cur, pos); } catch (_) {} }
+  return handoffV1(all, cur);
 }
 
-var xfer=null;   // { chunks:[[track,...],...], i, sid }
-
-/* ===== AUTO-CYCLING CODES =====
-   Manually advancing meant one scan and one click per code, which scales badly:
-   six codes is six trips back to the keyboard. The codes now rotate on their
-   own and wrap around forever, so the phone's continuous scanner can sit and
-   collect the whole set in one go without anyone touching either device.
-
-   Prev/Next still work and pause the rotation, since stepping through by hand
-   is the fallback when the phone cannot scan continuously. */
-var CYCLE_MS=900;          // slow enough for a camera to lock focus and decode
-var cycleT=null;
-
-function stopCycle(){ if(cycleT){clearInterval(cycleT);cycleT=null;} updateCycleBtn(); }
-function startCycle(){
-  if(!xfer||xfer.chunks.length<2)return;
+/* Several codes rotate on their own once started, wrapping forever, so the
+   phone's scanner can sit and collect the set. They start paused, so the
+   first code stays put long enough to scan. Prev/Next step by hand. */
+function stopCycle() { if (cycleT) { clearInterval(cycleT); cycleT = null; } paintCycle(); }
+function startCycle() {
+  if (!xfer || xfer.links.length < 2) return;
   stopCycle();
-  cycleT=setInterval(function(){
-    if(!xfer){stopCycle();return;}
-    xfer.i=(xfer.i+1)%xfer.chunks.length;   // wrap: a missed frame comes round again
-    renderXferFrame();
-  },CYCLE_MS);
-  updateCycleBtn();
+  cycleT = setInterval(() => { if (!xfer) { stopCycle(); return; } xfer.i = (xfer.i + 1) % xfer.links.length; renderXferFrame(); }, CYCLE_MS);
+  paintCycle();
 }
-function updateCycleBtn(){
-  var b=$('sheetauto');
-  if(!b)return;
-  b.textContent=cycleT?'Pause':'Auto';
-  b.classList.toggle('on',!!cycleT);
+function paintCycle() {
+  const b = $('sheetauto');
+  b.innerHTML = (cycleT ? ICONS.pauseS : ICONS.cycle) + '<span>' + (cycleT ? 'Pause' : 'Cycle') + '</span>';
+  b.classList.toggle('on', !!cycleT);
+  b.setAttribute('aria-pressed', String(!!cycleT));
+  b.setAttribute('aria-label', cycleT ? 'Pause cycling through the codes' : 'Cycle through the codes automatically');
+  b.title = cycleT ? 'Pause' : 'Cycle through the codes';
 }
-
-function renderXferFrame(){
-  if(!xfer)return;
-  var n=xfer.chunks.length,ch=xfer.chunks[xfer.i];
-  drawQR(buildLink(ch,xfer.sid,xfer.i+1,n));
-  if(n>1){
-    $('sheetnavlbl').textContent=(xfer.i+1)+' / '+n;
-    // Wrapping means there is always a next and a previous.
-    $('sheetprev').disabled=false;
-    $('sheetnext').disabled=false;
-    $('sheetmode').textContent=cycleT
-      ? 'Cycling '+(xfer.i+1)+' of '+n+' — hold your phone up'
-      : 'Code '+(xfer.i+1)+' of '+n;
-  }else{
-    $('sheetmode').textContent=ch.length+' track'+(ch.length>1?'s':'')+' ready';
-  }
+function renderXferFrame() {
+  if (!xfer) return;
+  drawQR(xfer.links[xfer.i]);
+  $('sheetnavlbl').textContent = 'Code ' + (xfer.i + 1) + ' of ' + xfer.links.length;
 }
+function sheetFocusables() { return [...$('sheet').querySelectorAll('button:not(:disabled):not([hidden])')].filter(b => b.offsetParent !== null); }
 
-function openSheet(){
-  if(!queue.length){qToast('Queue is empty');return;}
-  $('sheet').classList.add('show');
-  $('sheetwarn').style.display='none';
-  // Widen the window so the QR renders large enough to scan
-  try{window.resizeTo(460,720);}catch(e){}
+async function openSheet() {
+  if (!queue.length) { qToast('Add a track first, then send the queue to your phone'); return; }
+  closeMenu();
+  const gen = ++sheetGen;
+  sheetReturn = document.activeElement;
+  const sheet = $('sheet');
+  sheet.classList.add('show');
+  $('sheetnav').classList.remove('show'); $('sheetwarn').hidden = true; $('sheetcopy').hidden = false;
+  $('qrbox').innerHTML = '<p class="qr-msg">Making the code…</p>';
+  $('sheetsub').textContent = 'Point your phone’s camera at the code.';
+  $('sheetmode').textContent = '';
+  $('sheetx').focus();
+  // A popup this small draws modules too fine to scan; grow it while the sheet is up.
+  try { if (outerWidth < 440 || outerHeight < 700) { sheetResized = [outerWidth, outerHeight]; resizeTo(Math.max(outerWidth, 460), Math.max(outerHeight, 720)); } } catch (_) {}
 
-  // Hand off from whatever is playing now, so the phone picks up where you left off
-  var from=idx>0?idx:0;
-  var full=queue.slice(from);
+  const all = queue.map(t => ({ url: t.url, title: t.title, site: t.site || '' }));
+  const cur = idx, curT = idx >= 0 ? queue[idx] : null;
+  const pos = audio && audio.getAttribute('src') && isFinite(audio.currentTime) ? Math.floor(audio.currentTime) : 0;
+  const h = await buildHandoff(all, cur, pos);
+  if (gen !== sheetGen || !sheet.classList.contains('show')) return;
 
-  // Copy link always carries the whole handoff in one link, whatever its size —
-  // the escape hatch when a queue is too large or too tokened to scan.
-  sheetLink=buildLink(full,null,1,1);
-
-  var split=chunkQueue(full),chunks=split.chunks,oversize=split.oversize;
-
-  if(!chunks.length){
-    $('sheetnav').classList.remove('show');
-    $('qrbox').innerHTML='<div style="padding:40px 28px;color:#666;font-size:12px;font-family:sans-serif;text-align:center;line-height:1.6">These links are too large<br>for a scannable code</div>';
-    $('sheetsub').textContent='Tap Copy link, send it to yourself, and open it on your phone.';
-    $('sheetdot').className='sheet-dot wait';
-    $('sheetmode').textContent='Use Copy link';
+  sheetLink = h.copy;
+  stopCycle();
+  const sent = h.v === 2 ? all.length : all.length - Math.max(0, cur);
+  $('sheetmode').textContent = nTracks(sent) + (curT ? ' · starts at ‘' + shortTitle(curT.title) + '’' + (h.v === 2 && pos ? ', ' + fmt(pos) : '') : '');
+  if (!h.parts.length) {
+    xfer = null;
+    $('qrbox').innerHTML = '<p class="qr-msg">These links are too long for a scannable code.</p>';
+    $('sheetsub').textContent = 'Copy the link, send it to yourself, and open it on your phone.';
     return;
   }
-
-  xfer={chunks:chunks,i:0,sid:xferSid()};
-
-  if(chunks.length>1){
+  xfer = { chunks: h.parts.map(p => p.tracks), links: h.parts.map(p => p.link), i: 0, v: h.v };
+  const n = xfer.links.length;
+  if (n > 1) {
+    $('sheetsub').textContent = 'Your queue needs ' + n + ' codes. Scan code 1 with your phone, then press → for the next one, or Cycle to show them in turn.';
     $('sheetnav').classList.add('show');
-    $('sheetsub').textContent='Open the player on your phone, tap Scan, and hold it up — the '+chunks.length+' codes cycle on their own.';
-    $('sheetdot').className='sheet-dot wait';
-    renderXferFrame();
-    startCycle();          // hands-free by default; Prev/Next pauses it
-  }else{
-    $('sheetnav').classList.remove('show');
-    $('sheetsub').textContent='Scan with your phone camera to open the queue';
-    $('sheetdot').className='sheet-dot';
-    renderXferFrame();
+  } else {
+    $('sheetsub').textContent = 'Point your phone’s camera at the code. Your playlist opens there, ready to play.';
   }
-
-  if(oversize.length){
-    $('sheetwarn').textContent=oversize.length+' track'+(oversize.length>1?'s':'')+' too large to scan — Copy link sends '+(oversize.length>1?'them':'it')+' too.';
-    $('sheetwarn').style.display='block';
+  renderXferFrame();
+  if (h.oversize.length) {
+    $('sheetwarn').textContent = h.oversize.length + (h.oversize.length > 1 ? ' tracks have links' : ' track has a link') + ' too long for a code. Copy link includes ' + (h.oversize.length > 1 ? 'them' : 'it') + '.';
+    $('sheetwarn').hidden = false;
   }
 }
-
-function closeSheet(){
-  stopCycle();                 // never leave a timer redrawing a hidden canvas
+function closeSheet() {
+  if (!$('sheet').classList.contains('show')) return;
+  stopCycle();
   $('sheet').classList.remove('show');
   $('sheetnav').classList.remove('show');
-  xfer=null;
-  try{window.resizeTo(380,560);}catch(e){}
+  xfer = null; sheetGen++;
+  if (sheetResized) { try { resizeTo(sheetResized[0], sheetResized[1]); } catch (_) {} sheetResized = null; }
+  const back = sheetReturn && document.contains(sheetReturn) ? sheetReturn : $('qphone');
+  try { back.focus(); } catch (_) {}
 }
-
+const stepCode = d => { if (!xfer) return; stopCycle(); xfer.i = (xfer.i + d + xfer.links.length) % xfer.links.length; renderXferFrame(); };
 $('qphone').onclick = openSheet;
 $('sheetx').onclick = closeSheet;
-$('sheet').addEventListener('click', e => { if (e.target === $('sheet')) closeSheet(); });
-$('sheetcopy').onclick = () => { if (sheetLink) navigator.clipboard.writeText(sheetLink).then(() => qToast('Link copied')); };
-// Stepping by hand means taking manual control, so both stop the rotation and
-// wrap, rather than dead-ending at the first and last code.
-$('sheetprev').onclick = () => { if (!xfer) return; stopCycle(); xfer.i = (xfer.i - 1 + xfer.chunks.length) % xfer.chunks.length; renderXferFrame(); };
-$('sheetnext').onclick = () => { if (!xfer) return; stopCycle(); xfer.i = (xfer.i + 1) % xfer.chunks.length; renderXferFrame(); };
-$('sheetauto').onclick = () => { if (!xfer) return; cycleT ? stopCycle() : startCycle(); renderXferFrame(); };
+$('sheetprev').onclick = () => stepCode(-1);
+$('sheetnext').onclick = () => stepCode(1);
+$('sheetauto').onclick = () => { if (!xfer) return; cycleT ? stopCycle() : startCycle(); };
+$('sheetcopy').onclick = () => {
+  if (!sheetLink) return;
+  navigator.clipboard.writeText(sheetLink).then(() => qToast('Link copied. Open it on your phone.'), () => qToast('Couldn’t copy. The browser blocked the clipboard.'));
+};
+paintCycle();
 
-document.addEventListener('keydown',e=>{
-  if(e.target.tagName==='INPUT')return;
-  if(e.code==='Escape'){closeSheet();return}
-  // While the send sheet is up, arrows page through the codes instead of seeking.
-  if($('sheet').classList.contains('show')&&xfer&&xfer.chunks.length>1){
-    if(e.code==='ArrowLeft'){e.preventDefault();$('sheetprev').onclick();return}
-    if(e.code==='ArrowRight'){e.preventDefault();$('sheetnext').onclick();return}
+/* ===== KEYBOARD ===== */
+document.addEventListener('keydown', e => {
+  if (e.defaultPrevented) return;
+  const tg = e.target, typing = tg && (tg.tagName === 'INPUT' || tg.tagName === 'TEXTAREA' || tg.isContentEditable);
+  const sheetOpen = $('sheet').classList.contains('show');
+  if (e.key === 'Escape') {
+    if (!menu.hidden) { closeMenu(true); return; }
+    if (sheetOpen) { closeSheet(); return; }
+    if (!typing && $('errbar').classList.contains('show')) hideBanner();
+    return;
   }
-  if(e.code==='Space'){e.preventDefault();togglePlay()}
-  if(e.code==='ArrowLeft'&&audio)audio.currentTime=Math.max(0,audio.currentTime-5);
-  if(e.code==='ArrowRight'&&audio)audio.currentTime+=5;
-  if(e.code==='ArrowUp'){e.preventDefault();if(audio){audio.volume=Math.min(1,audio.volume+.05);vol=audio.volume;muted=audio.muted=false;updateVol();savePrefs()}}
-  if(e.code==='ArrowDown'){e.preventDefault();if(audio){audio.volume=Math.max(0,audio.volume-.05);vol=audio.volume;updateVol();savePrefs()}}
+  if (sheetOpen) {
+    if (e.key === 'Tab') {                    // keep focus inside the dialog
+      const f = sheetFocusables(); if (!f.length) return;
+      const i = f.indexOf(document.activeElement);
+      if (e.shiftKey && i <= 0) { e.preventDefault(); f[f.length - 1].focus(); }
+      else if (!e.shiftKey && i === f.length - 1) { e.preventDefault(); f[0].focus(); }
+      return;
+    }
+    if (xfer && xfer.links.length > 1 && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); stepCode(e.key === 'ArrowLeft' ? -1 : 1); }
+    return;
+  }
+  if (typing || e.ctrlKey || e.metaKey || e.altKey || !menu.hidden) return;
+  if (e.code === 'Space') {
+    // A control reached by keyboard keeps its own Space; otherwise Space is play/pause.
+    if (tg !== $('pp') && tg instanceof Element && tg.matches('button,[role="button"],a') && tg.matches(':focus-visible')) return;
+    e.preventDefault(); togglePlay(); return;
+  }
+  if (e.key === '/') { e.preventDefault(); toggleFilter(true); return; }
+  if (e.code === 'ArrowLeft') { e.preventDefault(); seekBy(-5); }
+  else if (e.code === 'ArrowRight') { e.preventDefault(); seekBy(5); }
+  else if (e.code === 'ArrowUp') { e.preventDefault(); setVol(vol + .05); }
+  else if (e.code === 'ArrowDown') { e.preventDefault(); setVol(vol - .05); }
 });
-// Delegate the OS / headset media keys through togglePlay and the same nav paths
-// the buttons use, so they reclaim probe connections and keep `playing` in sync
-// instead of poking the element directly and desyncing state.
-if('mediaSession' in navigator){
-  navigator.mediaSession.setActionHandler('play',()=>{if(audio&&!playing)togglePlay()});
-  navigator.mediaSession.setActionHandler('pause',()=>{if(audio&&playing)togglePlay()});
-  navigator.mediaSession.setActionHandler('previoustrack',()=>{if(idx>0)playIdx(idx-1)});
-  navigator.mediaSession.setActionHandler('nexttrack',()=>{if(idx<queue.length-1)playIdx(idx+1)});
-}
 
-// Filtering is a view-only concern — redraw without broadcasting.
-$('qfilter').addEventListener('input',e=>{filterText=e.target.value;renderQ({noSync:true})});
-$('qfilter').addEventListener('keydown',e=>{
-  e.stopPropagation();                                  // don't let Space hit togglePlay
-  if(e.key==='Escape'){filterText='';e.target.value='';renderQ({noSync:true})}
-});
-
-/* Load the queue: extension first, localStorage only if nothing answers.
-
-   The opener starts posting tracks the moment it opens this window, so by the
-   time the stored queue arrives there may already be tracks here that the store
-   has never seen. applyQueue() replaces wholesale, which would drop exactly the
-   track the user just clicked — so hold them aside and merge them back on top.
-   addTrack dedupes by URL, so a track that IS in the store costs nothing. */
+/* ===== START =====
+   Load the queue: extension first, localStorage if nothing answers. The opener
+   starts posting the moment it opens this window, so tracks may already be
+   here; keep the stored order, add those after it, and keep anything already
+   playing anchored. If nothing is, put back the track and position that were
+   current when the player last closed, paused. */
+paintVol(); paintAll(); renderQ({ noSync: true }); toggleFilter(false);
 extCall('ext-queue-get').then(r => {
-  const early = queue.map(t => ({ url: t.url, title: t.title, site: t.site }));
+  if (standingDown) return;                  // a relay never takes the stored queue
+  let list;
   if (r && r.ok && Array.isArray(r.queue)) {
-    extAlive = true;
-    applyQueue(r.queue);
-    try { console.info('[AFP player] queue from extension —', r.queue.length, 'tracks'); } catch (_) {}
+    extAlive = true; list = r.queue;
+    try { console.info('[AFP player] queue from extension:', list.length, 'tracks'); } catch (_) {}
   } else {
-    try { console.info('[AFP player] no extension relay; using local storage (per-site queue)'); } catch (_) {}
-    restore();
+    let s = null; try { s = JSON.parse(localStorage.getItem(STORE) || 'null'); } catch (_) {}
+    list = s && Array.isArray(s.queue) ? s.queue : [];
+    try { console.info('[AFP player] queue from local storage:', list.length, 'tracks'); } catch (_) {}
   }
-  early.forEach(t => addTrack(t.url, t.title, t.site));
-  loaded = true;          // only now is our picture complete enough to broadcast
-  syncState();
+  const early = queue.slice(), cur = idx >= 0 && queue[idx] ? queue[idx].url : null, seen = new Set();
+  applyingRemote = true;
+  try {
+    queue.length = 0;
+    list.forEach(t => { if (t && typeof t.url === 'string' && !seen.has(t.url)) { seen.add(t.url); queue.push(normTrack(Object.assign({}, t))); } });
+    early.forEach(t => { if (!seen.has(t.url)) { seen.add(t.url); queue.push(t); } });
+    idx = cur ? queue.findIndex(t => t.url === cur) : -1;
+  } finally { applyingRemote = false; }
+  loaded = true;                             // only now is our picture complete enough to broadcast
+  if (idx < 0) {
+    let now = null; try { now = JSON.parse(localStorage.getItem(NOW_KEY) || 'null'); } catch (_) {}
+    const i = now && typeof now.url === 'string' ? queue.findIndex(t => t.url === now.url) : -1;
+    if (i >= 0) loadIdx(i, { play: false, at: +now.pos || 0 });
+  }
+  renderQ();
+  paintAll();
 });
 </script></body></html>

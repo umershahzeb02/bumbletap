@@ -4,436 +4,913 @@
 <meta charset="UTF-8">
 <!-- No maximum-scale / user-scalable=no. Safari ignores those for pinch zoom,
      but every other browser honours them and blocks zooming entirely, which
-     fails WCAG 1.4.4 — anyone who needs to magnify the queue or a track title
-     simply cannot. Nothing here is a text input, so letting zoom back in
-     carries no focus-zoom side effect. viewport-fit stays: the safe-area insets
-     the layout uses depend on it. -->
+     fails WCAG 1.4.4. viewport-fit stays: the safe-area insets depend on it. -->
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#000000">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0E0F13" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<!-- "default", not black-translucent: translucent pins the status bar text to
+     white, which vanishes over the light theme once installed to the home screen. -->
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Audio">
 <!-- Installing to the home screen is what most reliably earns durable storage:
      an installed origin is exempt from the routine eviction that otherwise wipes
-     the saved queue after a week of not opening it. It also drops the browser
-     chrome, which buys back ~110px of vertical space on a phone. -->
+     the saved queue after a week of not opening it. -->
 <link rel="manifest" href="mobile-manifest.json">
 <link rel="apple-touch-icon" href="mobile-icon.svg">
-<title>Audio Player</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
+<title>BumbleTap Player</title>
+<!-- System fonts only. A web font once held up the player script long enough
+     to drop a track, so nothing here waits on a network font. -->
 <style>
-*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+[hidden]{display:none!important}
 :root{
-  --bg:#000;--s1:#1c1c1e;--s2:#2c2c2e;--sep:rgba(255,255,255,.07);
-  --t1:rgba(255,255,255,.92);--t2:rgba(255,255,255,.5);--t3:rgba(255,255,255,.22);
-  --acc:#0a84ff;--acc2:#5ac8fa;
-  /* env() needs a fallback. Without one, a browser that does not resolve
-     safe-area insets turns this into max(18px,) — invalid at computed-value
-     time — which silently drops every padding that uses --pad and collapses the
-     side gutters. */
-  --pad:max(18px,env(safe-area-inset-left,0px));
+  --bg:#0E0F13;--surface:#17191F;--raised:#1F222A;--line:#2A2E38;
+  --ink:#EEF0F4;--muted:#A3AABA;--faint:#6E7586;
+  --glass:rgba(14,15,19,.82);--scrim:rgba(4,5,8,.62);
+  --danger:#FF7A7E;--shadow:0 24px 60px -20px rgba(0,0,0,.7);
+  /* The current track's tone. JS sets these from the track URL's hash; the
+     button fill and tints are precomputed hex/rgba so nothing depends on
+     color-mix(), which older iOS drops to transparent. */
+  --accent:#3D7BF0;--accent-btn:#2B5AB2;--on-accent:#fff;--on-accent-btn:#fff;
+  --accent-soft:rgba(61,123,240,.16);--accent-line:rgba(61,123,240,.45);--accent-glow:rgba(61,123,240,.30);
+  --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  /* env() needs its fallback: without one an unsupported inset turns max() invalid
+     at computed-value time and silently drops the side gutters. */
+  --gl:max(20px,env(safe-area-inset-left,0px));
+  --gr:max(20px,env(safe-area-inset-right,0px));
+  --st:env(safe-area-inset-top,0px);
+  --sb:env(safe-area-inset-bottom,0px);
+  --t:150ms ease-out;
+  color-scheme:dark;
 }
-html,body{height:100%;overflow:hidden}
+@media (prefers-color-scheme: light){
+  :root{
+    --bg:#FFFFFF;--surface:#F6F7FA;--raised:#FFFFFF;--line:#E4E7EE;
+    --ink:#0C1222;--muted:#5A6378;--faint:#8A92A6;
+    --glass:rgba(255,255,255,.86);--scrim:rgba(12,18,34,.36);
+    --danger:#C4262E;--shadow:0 22px 50px -22px rgba(12,18,34,.45);
+    color-scheme:light;
+  }
+}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%;background:var(--bg)}
 body{
-  font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-  background:var(--bg);color:var(--t1);
-  display:flex;flex-direction:column;
-  user-select:none;-webkit-user-select:none;
+  min-height:100vh;min-height:100dvh;
+  font-family:var(--sans);font-size:16px;line-height:1.4;
+  background:var(--bg);color:var(--ink);
   -webkit-font-smoothing:antialiased;
-  padding-top:env(safe-area-inset-top);
-  padding-bottom:env(safe-area-inset-bottom);
+  -webkit-user-select:none;user-select:none;
+  overflow-x:hidden;
 }
+body.locked{overflow:hidden}
+/* A soft wash of the current track's tone behind the top of the page. */
+body::before{content:'';position:fixed;left:0;right:0;top:0;height:72vh;z-index:0;pointer-events:none;
+  background:radial-gradient(110% 75% at 50% -8%,var(--accent-soft),transparent 72%)}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none;-webkit-appearance:none;appearance:none}
+button:disabled{cursor:default;opacity:.45}
+:focus{outline:none}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+svg{display:block;flex:none}
+.sr{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
 
-/* Flex items default to min-width:auto, so they refuse to shrink below their
-   content. The now-playing subtitle is a nowrap URL and the error line is a long
-   sentence, and between them they pushed the whole column wider than the phone —
-   which is why the artwork, title, seek bar and controls all sat shifted right
-   with their right-hand side clipped off.
+/* ---------- buttons ---------- */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 16px;
+  border-radius:10px;background:var(--surface);border:1px solid var(--line);color:var(--ink);
+  font-size:15px;font-weight:600;letter-spacing:-.005em;transition:background var(--t),transform var(--t)}
+.btn:active{transform:scale(.97);background:var(--raised)}
+.btn-solid{background:var(--accent-btn);border-color:transparent;color:var(--on-accent-btn)}
+.btn-solid:active{background:var(--accent-btn);filter:brightness(.92)}
+.btn-wide{width:100%}
+.btn-primary{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;height:54px;border-radius:10px;
+  background:var(--accent-btn);color:var(--on-accent-btn);font-size:17px;font-weight:650;letter-spacing:-.01em;
+  box-shadow:0 12px 30px -12px var(--accent-glow);transition:transform var(--t),filter var(--t)}
+.btn-primary:active{transform:scale(.98);filter:brightness(.94)}
+.kicker{font-size:14px;font-weight:600;color:var(--muted);letter-spacing:-.005em}
 
-   min-width:0 alone was not enough, because intrinsic sizing still propagated up
-   the chain. Pinning each level to the viewport width explicitly is what stops
-   it: nothing in the column can now exceed the screen, so ellipsis and wrapping
-   engage instead of the layout growing. */
-html,body{width:100%;max-width:100%;overflow-x:hidden}
-#app{width:100%;max-width:100vw;min-width:0}
-.stage,.meta,.seek-wrap,.ctrls,.head,.qbar,.q{width:100%;max-width:100%;min-width:0}
-/* The URL line truncates; the error message wraps rather than running off. */
-.sub{max-width:100%}
-.err{overflow-wrap:anywhere}
+/* ---------- app shell ---------- */
+.app{position:relative;z-index:1;min-height:100vh;min-height:100dvh}
+.top{position:sticky;top:0;z-index:6;display:flex;align-items:center;gap:4px;
+  padding:calc(4px + var(--st)) calc(var(--gr) - 10px) 4px var(--gl);transition:background var(--t)}
+.top.stuck{background:var(--glass);-webkit-backdrop-filter:blur(14px) saturate(1.2);backdrop-filter:blur(14px) saturate(1.2)}
+.top-t{flex:1;min-width:0;font-size:16px;font-weight:650;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.countchip{height:44px;padding:0 4px;display:flex;align-items:center}
+.countchip .pill{display:inline-flex;align-items:center;gap:4px;height:30px;padding:0 12px;border-radius:999px;
+  background:var(--surface);border:1px solid var(--line);color:var(--muted);font-size:13px;font-weight:600}
+.countchip .pill b{color:var(--ink);font-weight:650;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.iconbtn{width:44px;height:44px;border-radius:10px;display:grid;place-items:center;color:var(--ink);transition:background var(--t)}
+.iconbtn:active{background:var(--surface)}
 
-/* ---------- header ---------- */
-.head{
-  display:flex;align-items:center;gap:9px;
-  padding:14px var(--pad) 10px;flex-shrink:0;
-}
-.head-t{font-size:14px;font-weight:600;color:var(--t2);flex:1;letter-spacing:-.01em;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-.head-c{font-size:11px;font-weight:700;color:var(--acc2);background:rgba(10,132,255,.12);padding:3px 10px;border-radius:11px;flex-shrink:0}
-/* Header actions. 34px hit targets — below ~32 they get genuinely hard to hit
-   with a thumb, which is the usual reason icon buttons feel bad on a phone. */
-.head-b{width:34px;height:34px;border-radius:9px;border:none;background:transparent;
-  color:var(--t2);display:flex;align-items:center;justify-content:center;
-  flex-shrink:0;cursor:pointer;transition:background .15s,transform .12s,color .15s}
-.head-b:active{transform:scale(.88);background:var(--s2);color:var(--t1)}
+.main{position:relative;max-width:480px;margin:0 auto;padding:4px var(--gr) calc(28px + var(--sb)) var(--gl)}
+.np{display:flex;flex-direction:column;align-items:center}
+
+/* Art: as large as min(width - 48, 360), but capped by height on short
+   screens so "Up next" still starts above the fold. */
+.art{--size:min(calc(100vw - 48px),360px,max(200px,calc(100vh - 430px)));
+  position:relative;width:var(--size);height:var(--size);margin-top:6px;border-radius:20px;overflow:hidden;
+  background:var(--surface);box-shadow:0 26px 54px -24px var(--accent-glow),0 2px 10px rgba(0,0,0,.18);
+  touch-action:pan-y;transform:scale(.95);transition:transform 220ms ease-out}
+@supports (height:100svh){.art{--size:min(calc(100vw - 48px),360px,max(200px,calc(100svh - 430px)))}}
+.art.on{transform:none}
+.art-img,.art-img svg{width:100%;height:100%}
+.art.has-err .art-img{filter:saturate(.35) brightness(.55)}
+
+.errcard{position:absolute;left:8px;right:8px;bottom:8px;padding:11px 12px 10px;border-radius:12px;
+  background:var(--raised);border:1px solid var(--line);color:var(--ink);box-shadow:var(--shadow);
+  -webkit-user-select:text;user-select:text}
+.errcard:not(.show){display:none}
+.err-h{display:flex;align-items:center;gap:7px;font-size:15px;font-weight:650;line-height:1.25;letter-spacing:-.01em}
+.err-h svg{color:var(--danger)}
+.err-p{margin-top:3px;font-size:14px;line-height:1.35;color:var(--ink);overflow-wrap:anywhere}
+.err-c{margin-top:2px;font-size:13px;line-height:1.35;color:var(--muted)}
+.err-acts{display:flex;gap:6px;margin-top:8px}
+.err-acts .btn{flex:1 1 0;min-width:0;padding:0 8px;font-size:14px;white-space:nowrap}
+
+.meta{width:100%;margin-top:18px;text-align:center;min-width:0}
+.title{font-size:21px;font-weight:700;line-height:1.25;letter-spacing:-.02em;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.sub{margin-top:4px;font-size:15px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.seekbox{width:100%;margin-top:12px}
+.seek{position:relative;height:40px;display:flex;align-items:center;cursor:pointer;touch-action:none;border-radius:8px}
+.seek-track{position:relative;width:100%;height:6px;border-radius:999px;background:var(--line)}
+.seek-fill{position:absolute;left:0;top:0;bottom:0;width:0;border-radius:inherit;background:var(--accent)}
+.seek-thumb{position:absolute;top:50%;left:0;width:20px;height:20px;margin:-10px 0 0 -10px;border-radius:50%;
+  background:#fff;border:4px solid var(--accent);box-shadow:0 2px 8px rgba(0,0,0,.35);transition:transform var(--t)}
+.seek.drag .seek-thumb{transform:scale(1.25)}
+.times{display:flex;justify-content:space-between;margin-top:-4px;font-family:var(--mono);font-variant-numeric:tabular-nums;
+  font-size:12px;font-weight:500;color:var(--muted)}
+
+.ctrls{display:flex;align-items:center;justify-content:space-between;width:100%;max-width:360px;margin-top:10px}
+.cb{width:52px;height:52px;border-radius:999px;display:grid;place-items:center;color:var(--ink);transition:background var(--t),transform var(--t)}
+.cb:active{background:var(--surface);transform:scale(.92)}
+.cb-main{width:72px;height:72px;background:var(--accent);color:var(--on-accent);box-shadow:0 14px 30px -12px var(--accent-glow)}
+.cb-main:active{background:var(--accent);transform:scale(.94)}
+
+.chips{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;max-width:360px;margin-top:8px}
+.chip{position:relative;isolation:isolate;min-width:44px;height:44px;padding:0 13px;display:inline-flex;align-items:center;
+  justify-content:center;gap:6px;color:var(--muted);font-size:13px;font-weight:600;white-space:nowrap}
+.chip::before{content:'';position:absolute;inset:5px 0;z-index:-1;border-radius:999px;background:var(--surface);
+  border:1px solid var(--line);transition:background var(--t),border-color var(--t)}
+.chip.on{color:var(--ink)}
+.chip.on::before{background:var(--accent-soft);border-color:var(--accent-line)}
+.chip.on svg{color:var(--accent)}
+.chip-i{width:44px;padding:0}
+.chip .badge{position:absolute;top:8px;right:6px;min-width:13px;height:13px;border-radius:7px;padding:0 2px;
+  background:var(--accent);color:var(--on-accent);font:700 9px/13px var(--sans);text-align:center}
+#spd{min-width:62px}
+#slpl{font-family:var(--sans)}
+#slp.on #slpl{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* ---------- up next ---------- */
+.upnext{margin-top:20px}
+.un-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:0 2px 4px}
+.un-head h2{font-size:18px;font-weight:700;letter-spacing:-.015em}
+.un-meta{font-size:13px;color:var(--muted)}
+.qlist{list-style:none}
+.qi{display:flex;align-items:center;border-radius:12px;transition:background var(--t)}
+.qi.cur{background:var(--accent-soft)}
+.qi-main{flex:1;min-width:0;display:flex;align-items:center;gap:12px;min-height:60px;padding:8px 0 8px 8px;text-align:left;border-radius:12px}
+.qi-main:active{background:var(--surface)}
+.qi-art{position:relative;width:44px;height:44px;border-radius:9px;overflow:hidden;flex:none;background:var(--surface)}
+.qi-art svg{width:100%;height:100%}
+.qi-tx{min-width:0;flex:1}
+.qi-t{display:block;font-size:15px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.qi-s{display:flex;align-items:center;gap:6px;margin-top:1px;font-size:13px;color:var(--muted);white-space:nowrap;overflow:hidden}
+.qi-s span{overflow:hidden;text-overflow:ellipsis}
+.qi-n{width:22px;flex:none;text-align:right;font-family:var(--mono);font-size:12px;color:var(--muted)}
+.tag{flex:none;font-size:11px;font-weight:700;color:var(--danger);border:1px solid currentColor;border-radius:999px;padding:0 6px;line-height:16px}
+.qi-x{width:44px;height:44px;flex:none;border-radius:10px;display:grid;place-items:center;color:var(--muted);margin-right:2px}
+.qi-x:active{background:var(--surface);color:var(--ink)}
+.qempty{padding:14px 10px;font-size:14px;color:var(--muted)}
+.eq{position:absolute;inset:0;display:none;align-items:center;justify-content:center;gap:3px;background:rgba(10,11,15,.62)}
+.eq i{width:4px;height:40%;max-height:22px;border-radius:2px;background:#fff;animation:eq 900ms ease-in-out infinite}
+.eq i:nth-child(2){animation-delay:-300ms}.eq i:nth-child(3){animation-delay:-600ms}
+.is-playing .qi.cur .eq{display:flex}
+@keyframes eq{0%,100%{height:22%}50%{height:52%}}
+#qall{margin-top:8px}
+
+/* ---------- start screen ---------- */
+.gate{position:fixed;inset:0;z-index:30;background:var(--bg);overflow-y:auto;-webkit-overflow-scrolling:touch}
+.gate:not(.show){display:none}
+.gate::before{content:'';position:fixed;inset:0 0 auto 0;height:80vh;pointer-events:none;
+  background:radial-gradient(110% 70% at 50% 0%,var(--accent-soft),transparent 72%)}
+.gate-in{position:relative;min-height:100%;max-width:440px;margin:0 auto;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;text-align:center;padding:calc(20px + var(--st)) var(--gr) calc(20px + var(--sb)) var(--gl)}
+.gate-art{--size:min(calc(100vw - 96px),300px,max(180px,calc(100vh - 380px)));
+  width:var(--size);height:var(--size);margin-top:16px;border-radius:20px;overflow:hidden;background:var(--surface);
+  box-shadow:0 26px 54px -24px var(--accent-glow)}
+@supports (height:100svh){.gate-art{--size:min(calc(100vw - 96px),300px,max(180px,calc(100svh - 380px)))}}
+.gate-art svg{width:100%;height:100%}
+.gate-title{margin-top:20px;font-size:22px;font-weight:700;line-height:1.25;letter-spacing:-.02em;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.gate-sub{margin-top:4px;font-size:15px;color:var(--muted)}
+.gate-then{margin-top:2px;font-size:14px;color:var(--muted);max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gate-skip{margin-top:12px;font-size:13px;line-height:1.4;color:var(--muted);padding:8px 12px;border-radius:10px;
+  background:var(--surface);border:1px solid var(--line)}
+.gate .btn-primary{margin-top:22px}
+.gate-note{margin-top:12px;font-size:13px;color:var(--muted)}
+
+/* ---------- sheets and cards ---------- */
+.overlay{position:fixed;inset:0;z-index:40;display:flex;align-items:flex-end;justify-content:center;
+  background:var(--scrim);padding:0 8px calc(8px + var(--sb))}
+.overlay:not(.show){display:none}
+.sheet{outline:none;width:100%;max-width:460px;max-height:calc(100% - 24px - var(--st));overflow-y:auto;
+  background:var(--raised);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);
+  padding:8px 12px 12px;animation:up 180ms ease-out}
+@keyframes up{from{transform:translateY(16px);opacity:0}to{transform:none;opacity:1}}
+.grab{width:36px;height:5px;border-radius:3px;background:var(--line);margin:0 auto 6px}
+.sheet-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:6px 6px 8px}
+.sheet-head h2{font-size:18px;font-weight:700;letter-spacing:-.015em}
+.sheet-meta{font-size:13px;color:var(--muted)}
+.menu{display:flex;flex-direction:column;padding:2px 0 6px}
+.mi{display:flex;align-items:center;gap:14px;min-height:52px;padding:0 10px;border-radius:10px;text-align:left;
+  font-size:16px;font-weight:550;transition:background var(--t)}
+.mi:active{background:var(--surface)}
+.mi svg{color:var(--muted)}
+.mi .chk{margin-left:auto;color:var(--accent);visibility:hidden}
+.mi[aria-checked="true"] .chk{visibility:visible}
+.mi[aria-checked="true"]{font-weight:650}
+.mi-danger,.mi-danger svg{color:var(--danger)}
+.addrow{display:flex;gap:8px;padding:2px 2px 10px}
+.addrow input{flex:1;min-width:0;height:44px;padding:0 12px;border-radius:10px;border:1px solid var(--line);
+  background:var(--surface);color:var(--ink);font:16px var(--sans);outline:none;-webkit-user-select:text;user-select:text}
+.addrow input::placeholder{color:var(--muted)}
+.addrow input:focus{border-color:var(--accent)}
+.card-body{padding:8px 8px 4px}
+.card-body h2{margin-top:4px;font-size:22px;font-weight:700;letter-spacing:-.02em}
+.card-body p{font-size:15px;line-height:1.45;color:var(--muted)}
+.segs{display:flex;gap:6px;margin:14px 0 12px;flex-wrap:wrap}
+.seg{flex:1;min-width:26px;height:28px;border-radius:8px;display:grid;place-items:center;background:var(--surface);
+  border:1px solid var(--line);color:var(--muted);font:600 12px var(--mono)}
+.seg.got{background:var(--accent-soft);border-color:var(--accent-line);color:var(--ink)}
+.bar{height:6px;border-radius:999px;background:var(--line);overflow:hidden;margin:14px 0 12px}
+.bar-fill{height:100%;width:0;background:var(--accent);transition:width 250ms ease-out}
+.sheet-acts{display:flex;flex-direction:column;gap:8px;margin-top:16px}
+.fine{margin-top:12px;font-size:13px;color:var(--muted);text-align:center}
+
+/* ---------- empty ---------- */
+.empty{position:relative;z-index:1;min-height:100vh;min-height:100dvh;display:flex;align-items:center;justify-content:center;
+  padding:calc(24px + var(--st)) var(--gr) calc(24px + var(--sb)) var(--gl)}
+.empty-in{width:100%;max-width:360px;display:flex;flex-direction:column;align-items:center;text-align:center}
+.stack{position:relative;width:132px;height:112px;margin-bottom:22px}
+.stack span{position:absolute;top:10px;width:84px;height:84px;border-radius:16px;overflow:hidden;box-shadow:0 14px 30px -14px rgba(0,0,0,.6)}
+.stack span svg{width:100%;height:100%}
+.stack span:nth-child(1){left:0;transform:rotate(-10deg)}
+.stack span:nth-child(2){right:0;transform:rotate(9deg)}
+.stack span:nth-child(3){left:24px;top:2px;z-index:1}
+.empty h1{font-size:22px;font-weight:700;letter-spacing:-.02em}
+.empty p{margin-top:8px;font-size:15px;line-height:1.5;color:var(--muted)}
+.empty p b{color:var(--ink);font-weight:650}
+.empty-acts{display:flex;flex-direction:column;gap:8px;width:100%;margin-top:22px}
+.diag{margin-top:18px!important;font:12px/1.55 var(--mono)!important;color:var(--muted)!important;white-space:pre-line;
+  word-break:break-word;text-align:left;-webkit-user-select:text;user-select:text}
+
+/* ---------- camera scanner ---------- */
+.scan{position:fixed;inset:0;z-index:50;background:#000;display:flex;flex-direction:column}
+.scan:not(.show){display:none}
+.scan video{flex:1;width:100%;object-fit:cover;background:#000}
+.scan-frame{position:absolute;top:42%;left:50%;transform:translate(-50%,-50%);width:min(68vw,300px);aspect-ratio:1;
+  border-radius:20px;pointer-events:none;box-shadow:0 0 0 100vmax rgba(0,0,0,.55);border:2px solid rgba(255,255,255,.9)}
+.scan-bar{position:absolute;left:0;right:0;bottom:0;padding:24px var(--gr) calc(16px + var(--sb)) var(--gl);
+  background:linear-gradient(transparent,rgba(0,0,0,.88) 30%);color:#fff;text-align:center}
+.scan-txt{font-size:15px;line-height:1.45;max-width:320px;margin:0 auto}
+.scan-bar .bar{max-width:260px;margin:12px auto 6px;background:rgba(255,255,255,.2)}
+.scan-count{font:600 13px var(--mono);color:rgba(255,255,255,.8);margin-bottom:12px}
+.scan-bar .btn{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.22);color:#fff;max-width:320px}
+
+/* ---------- toast ---------- */
+.toasts{position:fixed;left:0;right:0;top:calc(10px + var(--st));z-index:60;display:flex;justify-content:center;pointer-events:none;padding:0 16px}
+.toast{max-width:420px;padding:11px 16px;border-radius:12px;background:var(--ink);color:var(--bg);font-size:14px;font-weight:550;
+  line-height:1.35;box-shadow:var(--shadow);animation:down 180ms ease-out}
+@keyframes down{from{transform:translateY(-12px);opacity:0}to{transform:none;opacity:1}}
 .file-hidden{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 
-/* ---------- add one link by hand ---------- */
-/* Collapsed until the + in the header is tapped. The PC popup can afford a
-   permanent input row above the queue; a phone screen cannot, and this is a
-   thing you reach for occasionally rather than constantly. */
-.add-sec{display:none;padding:0 var(--pad) 10px}
-.add-sec.open{display:block}
-.add-row{display:flex;gap:8px}
-.add-input{flex:1;min-width:0;height:42px;padding:0 12px;border-radius:11px;
-  border:1px solid var(--sep);background:var(--s1);color:var(--t1);
-  font-family:inherit;outline:none;
-  /* 16px exactly: iOS Safari zooms the whole page when a focused input's text
-     is smaller than that, and the zoom does not come back on blur. */
-  font-size:16px}
-.add-input::placeholder{color:var(--t3)}
-.add-input:focus{border-color:var(--acc)}
-.add-btn{height:42px;padding:0 15px;border-radius:11px;border:none;
-  background:var(--acc);color:#fff;font-family:inherit;font-size:14px;
-  font-weight:600;flex-shrink:0;cursor:pointer;
-  transition:transform .12s,filter .15s}
-.add-btn:active{transform:scale(.95);filter:brightness(.9)}
-
-/* ---------- now playing ---------- */
-.stage{flex:1;display:flex;flex-direction:column;justify-content:center;padding:0 var(--pad);min-height:0}
-.art{
-  width:min(62vw,240px);aspect-ratio:1;margin:0 auto 26px;
-  border-radius:22px;
-  background:linear-gradient(140deg,#1a1a2e,#16213e 45%,#0f3460);
-  border:1px solid rgba(255,255,255,.06);
-  display:flex;align-items:center;justify-content:center;
-  color:rgba(255,255,255,.16);
-  box-shadow:0 20px 60px rgba(0,0,0,.6);
-  position:relative;overflow:hidden;flex-shrink:0;
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{transition:none!important;animation:none!important}
+  .art{transform:none}
 }
-.art::after{
-  content:'';position:absolute;inset:0;
-  background:radial-gradient(circle at 30% 25%,rgba(10,132,255,.18),transparent 62%);
-  opacity:0;transition:opacity .6s ease;
-}
-.art.on::after{opacity:1}
-.art svg{width:34%;height:34%;position:relative;z-index:1;transition:transform .4s ease}
-.art.on svg{transform:scale(.92)}
-
-.meta{text-align:center;margin-bottom:22px}
-.title{font-size:18px;font-weight:700;letter-spacing:-.02em;line-height:1.3;margin-bottom:5px;
-  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.sub{font-size:11px;color:var(--t3);font-family:ui-monospace,'SF Mono',Menlo,monospace;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-
-/* ---------- seek ---------- */
-.seek-wrap{padding:0 2px;margin-bottom:6px}
-.seek{height:26px;display:flex;align-items:center;cursor:pointer;touch-action:none}
-.seek-track{width:100%;height:5px;background:var(--s2);border-radius:3px;position:relative}
-.seek-fill{height:100%;background:var(--acc);border-radius:3px;width:0%;position:relative}
-.seek-dot{position:absolute;right:-7px;top:50%;transform:translateY(-50%);
-  width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 6px rgba(0,0,0,.55)}
-.times{display:flex;justify-content:space-between;font-size:11px;color:var(--t3);
-  font-variant-numeric:tabular-nums;font-weight:500;margin-bottom:14px}
-
-/* ---------- controls ---------- */
-.ctrls{display:flex;align-items:center;justify-content:center;gap:min(9vw,34px);margin-bottom:22px}
-.cb{width:48px;height:48px;border-radius:50%;border:none;background:transparent;color:var(--t2);
-  display:flex;align-items:center;justify-content:center;cursor:pointer;transition:transform .12s,color .12s}
-.cb:active{transform:scale(.88)}
-.cb.on{color:var(--acc2)}
-.cb-main{width:74px;height:74px;background:var(--acc);color:#fff;box-shadow:0 6px 26px rgba(10,132,255,.36)}
-.cb-main:active{transform:scale(.93)}
-.cb-sm{width:40px;height:40px}
-
-/* ---------- queue ---------- */
-.qbar{
-  display:flex;align-items:center;justify-content:space-between;
-  padding:11px var(--pad);border-top:1px solid var(--sep);
-  font-size:11px;font-weight:600;color:var(--t3);cursor:pointer;flex-shrink:0
-}
-.qbar svg{transition:transform .25s cubic-bezier(.4,0,.2,1)}
-.qbar.open svg{transform:rotate(180deg)}
-.q{max-height:0;overflow-y:auto;overscroll-behavior:contain;transition:max-height .3s cubic-bezier(.4,0,.2,1);flex-shrink:0}
-.q.open{max-height:46vh}
-.q::-webkit-scrollbar{width:0}
-.qi{display:flex;align-items:center;gap:11px;padding:12px var(--pad);
-  border-bottom:1px solid rgba(255,255,255,.03);cursor:pointer}
-.qi:active{background:rgba(255,255,255,.05)}
-.qi.on{background:rgba(10,132,255,.09)}
-.qi-n{font-size:11px;color:var(--t3);width:17px;text-align:center;font-variant-numeric:tabular-nums;flex-shrink:0}
-.qi.on .qi-n{color:var(--acc)}
-.qi-name{flex:1;font-size:13px;color:var(--t2);font-weight:500;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.qi.on .qi-name{color:var(--t1);font-weight:600}
-.qi-x{font-size:9px;color:var(--t3);text-transform:uppercase;font-weight:600;flex-shrink:0}
-
-/* ---------- states ---------- */
-.empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
-  padding:32px;text-align:center;gap:14px}
-.empty h2{font-size:17px;font-weight:700;letter-spacing:-.02em}
-.empty p{font-size:13px;color:var(--t3);line-height:1.65;max-width:290px}
-.empty .steps{text-align:left;font-size:12px;color:var(--t2);line-height:2;background:var(--s1);
-  border:1px solid var(--sep);border-radius:12px;padding:14px 18px}
-.empty .steps b{color:var(--acc2);font-weight:700}
-/* ---------- camera scanner ---------- */
-.scan{position:fixed;inset:0;z-index:40;background:#000;display:none;flex-direction:column}
-.scan.show{display:flex}
-.scan video{flex:1;width:100%;object-fit:cover;background:#000}
-.scan-frame{position:absolute;top:50%;left:50%;transform:translate(-50%,-55%);
-  width:min(68vw,300px);aspect-ratio:1;border-radius:20px;pointer-events:none;
-  box-shadow:0 0 0 100vmax rgba(0,0,0,.55);border:2px solid rgba(255,255,255,.85)}
-.scan-bar{position:absolute;left:0;right:0;bottom:0;padding:20px var(--pad) calc(24px + env(safe-area-inset-bottom,0px));
-  background:linear-gradient(transparent,rgba(0,0,0,.85) 42%);
-  display:flex;flex-direction:column;align-items:center;gap:12px}
-.scan-txt{font-size:13px;color:#fff;text-align:center;line-height:1.5;max-width:290px}
-.scan-prog{width:220px;max-width:70vw;height:7px;border-radius:4px;background:rgba(255,255,255,.16);overflow:hidden}
-.scan-progf{height:100%;width:0;background:var(--acc);transition:width .25s ease}
-.scan-count{font-family:ui-monospace,Menlo,monospace;font-size:13px;font-weight:700;color:var(--acc2);letter-spacing:.08em}
-.scan-x{position:absolute;top:calc(14px + env(safe-area-inset-top,0px));right:14px;
-  width:38px;height:38px;border-radius:50%;border:none;background:rgba(0,0,0,.55);
-  color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer}
-.empty-acts{display:flex;flex-direction:column;gap:9px;width:100%;max-width:290px}
-.ea{height:46px;border-radius:12px;border:1px solid var(--sep);background:var(--s1);
-  color:var(--t1);font-family:inherit;font-size:14px;font-weight:600;cursor:pointer;
-  transition:background .15s,transform .12s}
-.ea:active{transform:scale(.97);background:var(--s2)}
-.recv-bar{width:210px;max-width:72vw;height:7px;border-radius:4px;background:rgba(255,255,255,.1);overflow:hidden}
-.recv-fill{height:100%;background:var(--acc);width:0;transition:width .3s ease}
-.recv-count{font-family:'SF Mono',Menlo,monospace;font-size:13px;font-weight:700;color:var(--acc2);letter-spacing:.08em}
-
-.err{font-size:11px;color:#ff6b6b;text-align:center;padding:8px var(--pad);
-  display:none;font-weight:500;line-height:1.5}
-.err.show{display:block}
-
-.gate{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.9);
-  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
-  display:none;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:30px}
-.gate.show{display:flex}
-.gate-btn{width:92px;height:92px;border-radius:50%;border:none;background:var(--acc);color:#fff;
-  display:flex;align-items:center;justify-content:center;box-shadow:0 8px 34px rgba(10,132,255,.45);cursor:pointer}
-.gate-btn:active{transform:scale(.93)}
-.gate p{font-size:13px;color:var(--t2);text-align:center;max-width:260px;line-height:1.6}
-
-.toast{position:fixed;left:50%;transform:translateX(-50%);
-  bottom:calc(20px + env(safe-area-inset-bottom));
-  background:var(--s2);border:1px solid var(--sep);border-radius:10px;
-  padding:9px 16px;font-size:12px;color:var(--t2);z-index:30;
-  box-shadow:0 6px 22px rgba(0,0,0,.5);animation:tin .25s ease}
-@keyframes tin{from{opacity:0;transform:translateX(-50%) translateY(6px)}to{opacity:1;transform:translateX(-50%)}}
 </style>
 </head>
 <body>
 
-<div id="app" style="display:none;flex:1;flex-direction:column;min-height:0">
-  <div class="head">
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.28)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
-    <span class="head-t">Audio Player</span>
-    <span class="head-c" id="hc">0</span>
-    <button class="head-b" id="hadd" aria-label="Add a link" title="Add a link">
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+<audio id="au" preload="metadata" playsinline></audio>
+
+<div class="app" id="app" hidden>
+  <header class="top">
+    <span class="top-t">Now playing</span>
+    <button class="countchip" id="hc" type="button"><span class="pill"><b id="qc">0</b> <span id="qcl">tracks</span><span class="sr">, show all</span></span></button>
+    <button class="iconbtn" id="more" type="button" aria-label="Queue options" aria-haspopup="dialog">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg>
     </button>
-    <button class="head-b" id="hscan" aria-label="Scan codes from your computer" title="Scan from computer" style="display:none">
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="12" x2="17" y2="12"/></svg>
-    </button>
-    <button class="head-b" id="hshare" aria-label="Copy queue link" title="Copy queue link">
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>
-    </button>
-    <button class="head-b" id="hexp" aria-label="Export queue" title="Export queue">
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-    </button>
-    <button class="head-b" id="himp" aria-label="Import queue" title="Import queue">
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-    </button>
-  </div>
+  </header>
 
-  <!-- Revealed by the + in the header. Sits directly under it so the queue
-       below is not pushed around when it opens. -->
-  <div class="add-sec" id="addsec">
-    <div class="add-row">
-      <input class="add-input" id="urlin" type="url" inputmode="url"
-             placeholder="Paste audio URL…" spellcheck="false"
-             autocomplete="off" autocapitalize="off" autocorrect="off">
-      <button class="add-btn" id="addbtn">Add</button>
-    </div>
-  </div>
+  <main class="main">
+    <section class="np" aria-label="Now playing">
+      <div class="art" id="art">
+        <div class="art-img" id="artimg"></div>
+        <div class="errcard" id="err" role="alert">
+          <div class="err-h"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.5"/><line x1="12" y1="7.5" x2="12" y2="12.5"/><line x1="12" y1="16.3" x2="12.01" y2="16.3"/></svg><span id="errh">Couldn't play this one</span></div>
+          <p class="err-p" id="errp"></p>
+          <p class="err-c" id="errc"></p>
+          <div class="err-acts">
+            <button class="btn btn-solid" id="errskip" type="button">Skip</button>
+            <button class="btn" id="erract" type="button">Open page</button>
+          </div>
+        </div>
+      </div>
 
-  <div class="stage">
-    <div class="art" id="art">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
-    </div>
+      <div class="meta">
+        <h1 class="title" id="nt">Nothing loaded</h1>
+        <p class="sub" id="ns"></p>
+      </div>
 
-    <div class="meta">
-      <div class="title" id="nt">Nothing loaded</div>
-      <div class="sub" id="ns"></div>
-    </div>
+      <div class="seekbox">
+        <div class="seek" id="seek" role="slider" tabindex="0" aria-label="Position" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="0:00">
+          <div class="seek-track"><div class="seek-fill" id="sf"></div><div class="seek-thumb" id="sth"></div></div>
+        </div>
+        <div class="times"><span id="tc">0:00</span><span id="td">--:--</span></div>
+      </div>
 
-    <div class="seek-wrap">
-      <div class="seek" id="seek"><div class="seek-track"><div class="seek-fill" id="sf"><div class="seek-dot"></div></div></div></div>
-      <div class="times"><span id="tc">0:00</span><span id="td">--:--</span></div>
-    </div>
+      <div class="ctrls">
+        <button class="cb" id="b15" type="button" aria-label="Back 15 seconds">
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 9.2A9 9 0 1 1 3 12"/><polyline points="3 4.5 3.6 9.2 8.2 8.4"/><text x="12.4" y="15.6" text-anchor="middle" font-family="ui-sans-serif,system-ui,-apple-system,sans-serif" font-size="8" font-weight="700" fill="currentColor" stroke="none">15</text></svg>
+        </button>
+        <button class="cb" id="prev" type="button" aria-label="Previous">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="19 19.5 9 12 19 4.5"/><line x1="5" y1="19" x2="5" y2="5"/></svg>
+        </button>
+        <button class="cb cb-main" id="pp" type="button" aria-label="Play"></button>
+        <button class="cb" id="next" type="button" aria-label="Next">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4.5 15 12 5 19.5"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
+        </button>
+        <button class="cb" id="f30" type="button" aria-label="Forward 30 seconds">
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.4 9.2A9 9 0 1 0 21 12"/><polyline points="21 4.5 20.4 9.2 15.8 8.4"/><text x="11.6" y="15.6" text-anchor="middle" font-family="ui-sans-serif,system-ui,-apple-system,sans-serif" font-size="8" font-weight="700" fill="currentColor" stroke="none">30</text></svg>
+        </button>
+      </div>
 
-    <div class="ctrls">
-      <button class="cb cb-sm" id="shuf" aria-label="Shuffle">
-        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
-      </button>
-      <button class="cb" id="prev" aria-label="Previous">
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="5" width="3" height="14" rx="1"/><path d="M21 5v14l-10-7 10-7z"/></svg>
-      </button>
-      <button class="cb cb-main" id="pp" aria-label="Play">
-        <svg width="30" height="30" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.14v14l11-7-11-7z"/></svg>
-      </button>
-      <button class="cb" id="next" aria-label="Next">
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><rect x="18" y="5" width="3" height="14" rx="1"/><path d="M3 5v14l10-7L3 5z"/></svg>
-      </button>
-      <button class="cb cb-sm" id="lp" aria-label="Repeat">
-        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
-      </button>
-    </div>
-  </div>
+      <div class="chips">
+        <button class="chip chip-i" id="shuf" type="button" aria-label="Shuffle" aria-pressed="false">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
+        </button>
+        <button class="chip" id="spd" type="button" aria-label="Playback speed 1×"><span id="spdl" class="mono">1×</span></button>
+        <button class="chip" id="slp" type="button" aria-haspopup="dialog" aria-label="Sleep timer: off">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg><span id="slpl">Sleep</span>
+        </button>
+        <button class="chip chip-i" id="lp" type="button" aria-label="Repeat: off">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+          <span class="badge" id="lp1" hidden>1</span>
+        </button>
+      </div>
+    </section>
 
-  <div class="err" id="err"></div>
-
-  <div class="qbar" id="qbar">
-    <span>Up next · <span id="qc">0</span></span>
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
-  </div>
-  <div class="q" id="q"></div>
+    <section class="upnext" id="upnext" aria-labelledby="unh">
+      <div class="un-head"><h2 id="unh">Up next</h2><span class="un-meta" id="unmeta"></span></div>
+      <ul class="qlist" id="q"></ul>
+      <button class="btn btn-wide" id="qall" type="button" hidden>Show all</button>
+    </section>
+  </main>
 </div>
 
-<div class="empty" id="empty">
-  <h2>No queue received</h2>
-  <p>Open the player on your computer, then send the queue over.</p>
-  <div class="steps">
-    <div><b>1.</b> Open the audio player popup on your PC</div>
-    <div><b>2.</b> Tap <b>Send to Phone</b> under the queue</div>
-    <div><b>3.</b> Scan the QR code with this phone</div>
+<div class="empty" id="empty" hidden>
+  <div class="empty-in">
+    <div class="stack" id="stack" aria-hidden="true"><span></span><span></span><span></span></div>
+    <h1>Nothing to play yet</h1>
+    <p>On your computer, open the player and choose <b>Send to phone</b>. Then scan the code with this phone's camera.</p>
+    <div class="empty-acts">
+      <button class="btn btn-solid btn-wide" id="escan" type="button" hidden>Scan codes from your computer</button>
+      <button class="btn btn-wide" id="elink" type="button">Paste a queue link</button>
+      <button class="btn btn-wide" id="eadd" type="button">Add an audio link</button>
+      <button class="btn btn-wide" id="eimp" type="button">Import a file</button>
+    </div>
+    <p class="diag" id="diag" hidden></p>
   </div>
+</div>
 
-  <!-- Recovery lives HERE, not only in the header. The header sits inside #app,
-       which is display:none whenever the queue is empty, so the import button
-       was hidden at precisely the moment it was needed. -->
-  <div class="empty-acts">
-    <button class="ea" id="escan" style="display:none">Scan continuously</button>
-    <button class="ea" id="eadd">Add a link</button>
-    <button class="ea" id="eimp">Import a file</button>
-    <button class="ea" id="elink">Paste a queue link</button>
+<!-- Start screen: only when the browser refuses to play before a tap. -->
+<div class="gate" id="gate" role="dialog" aria-modal="true" aria-labelledby="gatetxt">
+  <div class="gate-in">
+    <p class="kicker" id="gatesum"></p>
+    <div class="gate-art" id="gateart"></div>
+    <h2 class="gate-title" id="gatetxt"></h2>
+    <p class="gate-sub" id="gatesub"></p>
+    <p class="gate-then" id="gatethen"></p>
+    <p class="gate-skip" id="gateskip" hidden></p>
+    <button class="btn-primary" id="gatebtn" type="button">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><polygon points="7 4.5 19 12 7 19.5"/></svg>
+      Start listening
+    </button>
+    <p class="gate-note">Your phone needs one tap before it can play sound.</p>
   </div>
+</div>
 
-  <div id="diag" style="display:none;font-size:10px;color:rgba(255,255,255,.28);
-    font-family:ui-monospace,Menlo,monospace;line-height:1.6;max-width:300px;word-break:break-word"></div>
+<!-- Multi-part transfer progress. Always has a way back. -->
+<div class="overlay" id="recv" role="dialog" aria-modal="true" aria-labelledby="recvh">
+  <div class="sheet" tabindex="-1">
+    <div class="card-body">
+      <p class="kicker">Receiving your queue</p>
+      <h2 id="recvh">Got 1 of 2 codes</h2>
+      <div class="segs" id="recvsegs"></div>
+      <p id="recvp">Scan the next one with your camera.</p>
+      <div class="sheet-acts">
+        <button class="btn btn-solid btn-wide" id="recvscan" type="button" hidden>Scan the rest here</button>
+        <button class="btn btn-wide" id="recvback" type="button">Back to player</button>
+      </div>
+      <p class="fine">Codes you've scanned are kept for 15 minutes.</p>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheett">
+  <div class="sheet" tabindex="-1">
+    <div class="grab" aria-hidden="true"></div>
+    <div class="sheet-head"><h2 id="sheett">Queue</h2><span class="sheet-meta" id="sheetmeta"></span></div>
+    <form class="addrow" id="addsec" hidden>
+      <label class="sr" for="urlin">Audio link</label>
+      <input id="urlin" type="url" inputmode="url" placeholder="Paste an audio link" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off">
+      <button class="btn btn-solid" id="addbtn" type="submit" disabled>Add</button>
+    </form>
+    <div class="menu">
+      <button class="mi" id="hadd" type="button"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add a link</button>
+      <button class="mi" id="hscan" type="button" hidden><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="12" x2="17" y2="12"/></svg>Scan codes from your computer</button>
+      <button class="mi" id="hshare" type="button"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>Copy this queue's link</button>
+      <button class="mi" id="hexp" type="button"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export queue</button>
+      <button class="mi" id="himp" type="button"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Import a file</button>
+      <button class="mi mi-danger" id="hclear" type="button"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg><span id="hclearl">Clear queue</span></button>
+    </div>
+    <button class="btn btn-wide" id="sheetdone" type="button">Done</button>
+  </div>
+</div>
+
+<div class="overlay" id="sleepsheet" role="dialog" aria-modal="true" aria-labelledby="sleept">
+  <div class="sheet" tabindex="-1">
+    <div class="grab" aria-hidden="true"></div>
+    <div class="sheet-head"><h2 id="sleept">Sleep timer</h2><span class="sheet-meta" id="sleepmeta">Off</span></div>
+    <div class="menu" role="radiogroup" aria-labelledby="sleept" id="sleepopts">
+      <button class="mi" type="button" role="radio" data-sleep="off">Off<svg class="chk" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>
+      <button class="mi" type="button" role="radio" data-sleep="15">15 minutes<svg class="chk" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>
+      <button class="mi" type="button" role="radio" data-sleep="30">30 minutes<svg class="chk" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>
+      <button class="mi" type="button" role="radio" data-sleep="60">60 minutes<svg class="chk" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>
+      <button class="mi" type="button" role="radio" data-sleep="end">End of this track<svg class="chk" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>
+    </div>
+    <button class="btn btn-wide" id="sleepdone" type="button">Done</button>
+  </div>
 </div>
 
 <!-- Kept at body level: a file input inside a display:none ancestor cannot be
      reliably opened with .click() in every browser. -->
-<input type="file" class="file-hidden" id="hfile" accept=".json,.m3u,.m3u8,.txt,application/json,text/plain">
+<input type="file" class="file-hidden" id="hfile" accept=".json,.m3u,.m3u8,.txt,application/json,text/plain" tabindex="-1" aria-hidden="true">
 
-<div class="scan" id="scan">
+<div class="scan" id="scan" role="dialog" aria-modal="true" aria-label="Scan codes from your computer">
   <video id="scanvid" playsinline muted></video>
   <div class="scan-frame"></div>
-  <button class="scan-x" id="scanx" aria-label="Stop scanning">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-  </button>
   <div class="scan-bar">
-    <div class="scan-txt" id="scantxt">Point at your computer screen. Keep it steady — the codes cycle on their own.</div>
-    <div class="scan-prog"><div class="scan-progf" id="scanprogf"></div></div>
-    <div class="scan-count" id="scancount">0 / ?</div>
+    <p class="scan-txt" id="scantxt">Point at your computer screen and hold steady. The codes change on their own.</p>
+    <div class="bar"><div class="bar-fill" id="scanprogf"></div></div>
+    <p class="scan-count" id="scancount">0 / ?</p>
+    <button class="btn btn-wide" id="scanx" type="button">Back to player</button>
   </div>
 </div>
 
-<div class="empty" id="recv" style="display:none">
-  <h2 id="recvh">Receiving…</h2>
-  <p id="recvp">Scan the next code on your computer.</p>
-  <div class="recv-bar"><div class="recv-fill" id="recvfill"></div></div>
-  <div class="recv-count" id="recvcount">0 / 0</div>
-  <!-- Mid-transfer escape from scan-tap-scan-tap into the hands-free flow. -->
-  <div class="empty-acts" style="margin-top:6px">
-    <button class="ea" id="recvscan" style="display:none">Scan the rest continuously</button>
-  </div>
-</div>
-
-<div class="gate" id="gate">
-  <button class="gate-btn" id="gatebtn" aria-label="Start playback">
-    <svg width="38" height="38" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.14v14l11-7-11-7z"/></svg>
-  </button>
-  <p id="gatetxt">Tap to start playback</p>
-</div>
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
 
 <script>
 (function(){
+  'use strict';
   var $ = function(id){ return document.getElementById(id); };
   var STORE = 'afp_mobile_v1';
+  var XKEY = 'afp_xfer_', XTTL = 15 * 60 * 1000;
+  var MAX_HASH = 30000;          // beyond this the URL is unwieldy; storage only
+  var SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
-  var queue = [], idx = -1, audio = null;
-  var playing = false, looping = false, shuffling = false;
+  /* The site's seven tones: [tone, text-button fill, art gradient end].
+     The button fill is the tone mixed 20% toward black in OKLab, which is what
+     it takes for white text on it to clear 4.5:1. Yellow keeps its own fill and
+     takes dark text instead. Order matches the spec; a track's tone is
+     FNV-1a(url) % 7, so the same link gets the same colour everywhere. */
+  var TONES = [
+    ['#F07A2B', '#B2591D', '#6A320D'],   // orange
+    ['#E5484D', '#AA3337', '#651B1D'],   // red
+    ['#2FA86A', '#207C4D', '#0F482B'],   // green
+    ['#3D7BF0', '#2B5AB2', '#16336A'],   // blue
+    ['#8B5CF6', '#6642B7', '#3A246D'],   // violet
+    ['#E64C9A', '#AB3671', '#661D42'],   // pink
+    ['#E8B425', '#E8B425', '#674E0A']    // yellow
+  ];
+  var YELLOW = 6, DEFAULT_TONE = 3;
+
+  var audio = $('au');
+  var queue = [], idx = -1;
+  var playing = false, shuffling = false, repeat = 'off', rate = 1;
+  var sorder = [];                 // shuffled play order (indices into queue)
   var seeking = false;
+  var activated = false;           // a tap (or allowed autoplay) has started sound here
+  var gateUp = false, gateSum = null, gateSkipped = [];
+  var pendingSeek = null, loadTok = 0;
+  var qExpanded = false;
+  var sleepMode = 'off', sleepEnd = 0, sleepTimer = null;
+  var errTimer = null, errDeadline = 0, errHeld = false, errInfo = null;
 
-  var ICON_PLAY  = '<svg width="30" height="30" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.14v14l11-7-11-7z"/></svg>';
-  var ICON_PAUSE = '<svg width="30" height="30" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1.2"/><rect x="14" y="4" width="4" height="16" rx="1.2"/></svg>';
-
+  /* ---------- small helpers ---------- */
   function fmt(s){
     if(!isFinite(s) || s < 0) return '--:--';
-    var m = Math.floor(s/60), c = Math.floor(s%60);
-    return m + ':' + (c<10?'0':'') + c;
+    s = Math.floor(s);
+    var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), c = s % 60;
+    return (h ? h + ':' + (m < 10 ? '0' : '') : '') + m + ':' + (c < 10 ? '0' : '') + c;
   }
+  function plural(n, one, many){ return n + ' ' + (n === 1 ? one : (many || one + 's')); }
+  function hostOf(u){ try { return new URL(u).hostname.replace(/^www\./, ''); } catch(e){ return ''; } }
+  function siteOf(t){ return (t && (t.site || hostOf(t.url))) || ''; }
+  function fromLine(t){ var s = siteOf(t); return s ? 'from ' + s : ''; }
+  function isHttp(u){ return typeof u === 'string' && /^https?:\/\/[^\s]+$/i.test(u); }
+  function nameFromUrl(u){
+    var last = String(u || '').split('?')[0].split('#')[0].split('/').pop() || '';
+    try { last = decodeURIComponent(last); } catch(e){}
+    return last.slice(0, 80);
+  }
+  function cleanTrack(t){
+    if(!t || !isHttp(t.url)) return null;
+    return {
+      title: String(t.title == null ? '' : t.title).trim() || nameFromUrl(t.url) || 'Untitled',
+      url: t.url,
+      site: typeof t.site === 'string' ? t.site.trim() : ''
+    };
+  }
+  function esc(s){
+    return String(s).replace(/[&<>"']/g, function(c){ return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]; });
+  }
+  function listWords(arr){
+    if(arr.length < 2) return arr.join('');
+    return arr.slice(0, -1).join(', ') + ' and ' + arr[arr.length - 1];
+  }
+  var toastT = null;
   function toast(msg){
-    var old = document.querySelector('.toast');
-    if(old) old.remove();
+    var box = $('toasts');
+    box.innerHTML = '';
     var t = document.createElement('div');
     t.className = 'toast'; t.textContent = msg;
-    document.body.appendChild(t);
-    setTimeout(function(){ t.remove(); }, 2400);
+    box.appendChild(t);
+    clearTimeout(toastT);
+    toastT = setTimeout(function(){ t.remove(); }, 2800);
   }
 
-  /* ---------- decode the handoff payload ---------- */
-  function unb64url(s){
-    s = s.replace(/-/g,'+').replace(/_/g,'/');
-    while(s.length % 4) s += '=';
-    return decodeURIComponent(escape(atob(s)));
+  /* ---------- generated artwork ---------- */
+  function hash(s){
+    var h = 0x811c9dc5;
+    for(var i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+    return h >>> 0;
   }
-  // Parses a handoff out of any string carrying one: this page's own hash, a
-  // pasted link, or the text decoded from a QR frame by the camera scanner.
-  function parseHandoff(str){
-    var h = String(str == null ? '' : str);
+  function prng(seed){
+    var s = seed >>> 0 || 1;
+    return function(){ s = (Math.imul(s, 1103515245) + 12345) >>> 0; return s / 4294967296; };
+  }
+  function toneIndex(t){ return t ? hash(t.url || '') % 7 : DEFAULT_TONE; }
+  var LETTER = (function(){ try { return new RegExp('[\\p{L}\\p{N}]', 'u'); } catch(e){ return /[A-Za-z0-9]/; } })();
+  // Skip series prefixes ("Ep. 12:", "Lecture 1:", "#4 –") so a series doesn't all read "E".
+  var SERIES_PREFIX = /^\s*(?:(?:ep(?:isode)?|e|ch(?:apter)?|part|pt|lecture|lesson|track|no|vol(?:ume)?|session|season|s)\.?\s*#?\d+[a-z]?|#\d+)\s*[:.\-–—|)]*\s*/i;
+  function glyphOf(title){
+    var s = String(title || ''), rest = s.replace(SERIES_PREFIX, '');
+    var m = (rest || s).match(LETTER);
+    return m ? m[0].toUpperCase() : '';
+  }
+  // Everything that decides a track's art, shared by the SVG and the canvas.
+  function artSpec(t, toneOverride, glyphOverride){
+    var url = (t && t.url) || '';
+    var ti = toneOverride != null ? toneOverride : toneIndex(t);
+    var h2 = hash(url + '|art');
+    var r = prng(h2), shapes = [];
+    var rings = !!(h2 & 4);
+    if(rings){
+      var cx = 16 + r() * 68, cy = 16 + r() * 68, step = 9 + r() * 6;
+      for(var k = 1; k <= 12; k++) shapes.push([cx, cy, k * step]);
+    } else {
+      var n = 11, w = 100 / n;
+      for(var i = 0; i < n; i++){ var hh = 14 + r() * 48; shapes.push([i * w + w * .22, 100 - hh, w * .56, hh + 6]); }
+    }
+    return { c1: TONES[ti][0], c2: TONES[ti][2], rings: rings, shapes: shapes,
+             glyph: glyphOverride != null ? glyphOverride : glyphOf(t && t.title) };
+  }
+  var artUid = 0;
+  var NOTE = '<g transform="translate(50 50) scale(2.2) translate(-12 -12)" fill="none" stroke="#fff" stroke-opacity=".7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></g>';
+  function artSVG(t, toneOverride, glyphOverride){
+    var a = artSpec(t, toneOverride, glyphOverride), id = 'ag' + (++artUid), p = '';
+    if(a.rings){
+      a.shapes.forEach(function(s){ p += '<circle cx="' + s[0].toFixed(1) + '" cy="' + s[1].toFixed(1) + '" r="' + s[2].toFixed(1) + '"/>'; });
+      p = '<g fill="none" stroke="#fff" stroke-opacity=".13" stroke-width="1.4">' + p + '</g>';
+    } else {
+      a.shapes.forEach(function(s){ p += '<rect x="' + s[0].toFixed(1) + '" y="' + s[1].toFixed(1) + '" width="' + s[2].toFixed(1) + '" height="' + s[3].toFixed(1) + '" rx="' + (s[2] / 2).toFixed(1) + '"/>'; });
+      p = '<g fill="#fff" fill-opacity=".12">' + p + '</g>';
+    }
+    var g = a.glyph
+      ? '<text x="50" y="50" dy=".35em" text-anchor="middle" font-family="ui-sans-serif,system-ui,-apple-system,\'Segoe UI\',Roboto,sans-serif" font-size="40" font-weight="700" fill="#fff" fill-opacity=".7">' + esc(a.glyph) + '</text>'
+      : NOTE;
+    return '<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice" aria-hidden="true" focusable="false">'
+      + '<defs><linearGradient id="' + id + '" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="' + a.c1 + '"/><stop offset="1" stop-color="' + a.c2 + '"/></linearGradient></defs>'
+      + '<rect width="100" height="100" fill="url(#' + id + ')"/>' + p + g + '</svg>';
+  }
+  // The same art as PNG for the lock screen. Only the current track is cached.
+  var pngCache = { key: null, urls: null };
+  function artPNGs(t){
+    if(pngCache.key === t.url + '|' + t.title) return pngCache.urls;
+    var out = [];
+    [96, 256, 512].forEach(function(size){
+      try {
+        var a = artSpec(t), cv = document.createElement('canvas');
+        cv.width = cv.height = size;
+        var x = cv.getContext('2d'); if(!x) return;
+        x.scale(size / 100, size / 100);
+        var gr = x.createLinearGradient(0, 0, 100, 100);
+        gr.addColorStop(0, a.c1); gr.addColorStop(1, a.c2);
+        x.fillStyle = gr; x.fillRect(0, 0, 100, 100);
+        if(a.rings){
+          x.strokeStyle = 'rgba(255,255,255,.13)'; x.lineWidth = 1.4;
+          a.shapes.forEach(function(s){ x.beginPath(); x.arc(s[0], s[1], s[2], 0, Math.PI * 2); x.stroke(); });
+        } else {
+          x.fillStyle = 'rgba(255,255,255,.12)';
+          a.shapes.forEach(function(s){
+            var r = s[2] / 2; x.beginPath();
+            x.moveTo(s[0] + r, s[1]); x.arcTo(s[0] + s[2], s[1], s[0] + s[2], s[1] + s[3], r);
+            x.arcTo(s[0] + s[2], s[1] + s[3], s[0], s[1] + s[3], r); x.arcTo(s[0], s[1] + s[3], s[0], s[1], r);
+            x.arcTo(s[0], s[1], s[0] + s[2], s[1], r); x.closePath(); x.fill();
+          });
+        }
+        if(a.glyph){
+          x.fillStyle = 'rgba(255,255,255,.7)';
+          x.font = '700 40px ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+          x.textAlign = 'center'; x.textBaseline = 'alphabetic';
+          x.fillText(a.glyph, 50, 50 + 40 * .35);
+        } else {
+          x.translate(50, 50); x.scale(2.2, 2.2); x.translate(-12, -12);
+          x.strokeStyle = 'rgba(255,255,255,.7)'; x.lineWidth = 2; x.lineCap = 'round'; x.lineJoin = 'round';
+          x.beginPath(); x.moveTo(9, 18); x.lineTo(9, 5); x.lineTo(21, 3); x.lineTo(21, 16); x.stroke();
+          x.beginPath(); x.arc(6, 18, 3, 0, Math.PI * 2); x.stroke();
+          x.beginPath(); x.arc(18, 16, 3, 0, Math.PI * 2); x.stroke();
+        }
+        out.push({ src: cv.toDataURL('image/png'), sizes: size + 'x' + size, type: 'image/png' });
+      } catch(e){}
+    });
+    pngCache = { key: t.url + '|' + t.title, urls: out };
+    return out;
+  }
+  function rgba(hex, a){
+    var n = parseInt(hex.slice(1), 16);
+    return 'rgba(' + (n >> 16 & 255) + ',' + (n >> 8 & 255) + ',' + (n & 255) + ',' + a + ')';
+  }
+  function applyTone(t){
+    var ti = toneIndex(t), tone = TONES[ti], st = document.documentElement.style;
+    st.setProperty('--accent', tone[0]);
+    st.setProperty('--accent-btn', tone[1]);
+    st.setProperty('--on-accent', ti === YELLOW ? '#1A1405' : '#fff');
+    st.setProperty('--on-accent-btn', ti === YELLOW ? '#1A1405' : '#fff');
+    st.setProperty('--accent-soft', rgba(tone[0], .16));
+    st.setProperty('--accent-line', rgba(tone[0], .45));
+    st.setProperty('--accent-glow', rgba(tone[0], .42));
+  }
+
+  /* ---------- handoff links ----------
+     v2: #v=2&d=<base64url(deflate-raw(UTF-8 JSON))>
+     v1: #q=<base64url(UTF-8 JSON)>
+     Both take &s=<sid>&c=<k>&n=<N> for multi-part, and this page adds &o=1 to
+     the hash it writes for itself so a reload is never mistaken for a scan.
+     JSON: {b: shared URL prefix, t: [[title, url suffix, site], ...],
+            i: current index in this part or -1, p: position in seconds}.
+     v1 carries only {b, t:[[title, suffix]]}; extra fields are read if present. */
+  function params(str){
+    var h = String(str == null ? '' : str), out = {};
     var cut = h.indexOf('#');
     if(cut >= 0) h = h.slice(cut + 1);
-    if(!h) return null;
-    var params = {};
     h.split('&').forEach(function(kv){
       var i = kv.indexOf('=');
-      if(i > 0) params[kv.slice(0,i)] = kv.slice(i+1);
+      if(i > 0){ var v = kv.slice(i + 1); try { v = decodeURIComponent(v); } catch(e){} out[kv.slice(0, i)] = v; }
     });
-    if(!params.q) return null;
-    try {
-      var obj = JSON.parse(unb64url(params.q));
-      var base = obj.b || '';
-      var tracks = (obj.t || []).map(function(pair){
-        var url = base + pair[1];
-        var title = pair[0] || decodeURIComponent(url.split('/').pop().split('?')[0]).slice(0,70) || 'Untitled';
-        return { title: title, url: url };
-      });
-      // s/c/n are present only on a multi-part handoff. Absent → a lone code,
-      // which is the format every earlier link used, so old links still work.
-      var n = parseInt(params.n, 10); if(!(n > 0)) n = 1;
-      var c = parseInt(params.c, 10); if(!(c > 0)) c = 1;
-      return { tracks: tracks, sid: params.s || null, c: c, n: n };
-    } catch(e){
-      return null;
-    }
+    return out;
   }
-  function readHash(){ return parseHandoff(location.hash); }
+  function b64ToBytes(s){
+    s = String(s).replace(/\s/g, '').replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '');
+    while(s.length % 4) s += '=';
+    var bin = atob(s), out = new Uint8Array(bin.length);
+    for(var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+  function bytesToB64(bytes){
+    var bin = '';
+    for(var i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  function utf8Decode(bytes){
+    if(window.TextDecoder) return new TextDecoder().decode(bytes);
+    var s = ''; for(var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    return decodeURIComponent(escape(s));
+  }
+  function utf8Encode(str){
+    if(window.TextEncoder) return new TextEncoder().encode(str);
+    var s = unescape(encodeURIComponent(str)), out = new Uint8Array(s.length);
+    for(var i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+    return out;
+  }
+
+  /* Raw-DEFLATE decoder for browsers without DecompressionStream('deflate-raw')
+     (iOS before 16.4, older Android webviews). A straight port of zlib's puff:
+     small, slow, and plenty for a few kilobytes of queue. */
+  var LBASE = [3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258];
+  var LEXT  = [0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0];
+  var DBASE = [1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577];
+  var DEXT  = [0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13];
+  var CLORD = [16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15];
+  function inflateRaw(src){
+    var pos = 0, bitbuf = 0, bitcnt = 0, out = [];
+    function bits(n){
+      var v = bitbuf;
+      while(bitcnt < n){
+        if(pos >= src.length) throw new Error('deflate: out of input');
+        v |= src[pos++] << bitcnt; bitcnt += 8;
+      }
+      bitbuf = v >>> n; bitcnt -= n;
+      return v & ((1 << n) - 1);
+    }
+    function table(lens, n){
+      var count = new Array(16).fill(0), offs = new Array(16).fill(0), sym = new Array(n);
+      for(var i = 0; i < n; i++) count[lens[i]]++;
+      count[0] = 0;
+      for(var l = 1; l < 16; l++) offs[l] = offs[l - 1] + count[l - 1];
+      for(var s = 0; s < n; s++) if(lens[s]) sym[offs[lens[s]]++] = s;
+      return { count: count, sym: sym };
+    }
+    function decode(h){
+      var code = 0, first = 0, index = 0;
+      for(var len = 1; len < 16; len++){
+        code |= bits(1);
+        var c = h.count[len];
+        if(code - c < first) return h.sym[index + (code - first)];
+        index += c; first += c; first <<= 1; code <<= 1;
+      }
+      throw new Error('deflate: bad code');
+    }
+    function codes(lt, dt){
+      for(;;){
+        var s = decode(lt);
+        if(s < 256){ out.push(s); continue; }
+        if(s === 256) return;
+        s -= 257;
+        if(s >= 29) throw new Error('deflate: bad length');
+        var len = LBASE[s] + bits(LEXT[s]);
+        var ds = decode(dt);
+        if(ds >= 30) throw new Error('deflate: bad distance');
+        var dist = DBASE[ds] + bits(DEXT[ds]);
+        if(dist > out.length) throw new Error('deflate: distance too far');
+        for(var k = 0, from = out.length - dist; k < len; k++) out.push(out[from + k]);
+      }
+    }
+    var fixedL = null, fixedD = null, last;
+    do {
+      last = bits(1);
+      var type = bits(2);
+      if(type === 0){
+        bitbuf = 0; bitcnt = 0;
+        if(pos + 4 > src.length) throw new Error('deflate: short stored block');
+        var len = src[pos] | (src[pos + 1] << 8);
+        pos += 4;
+        if(pos + len > src.length) throw new Error('deflate: short stored block');
+        for(var i = 0; i < len; i++) out.push(src[pos++]);
+      } else if(type === 1){
+        if(!fixedL){
+          var l = [];
+          for(var a = 0; a < 288; a++) l.push(a < 144 ? 8 : a < 256 ? 9 : a < 280 ? 7 : 8);
+          fixedL = table(l, 288);
+          var d = []; for(var b = 0; b < 30; b++) d.push(5);
+          fixedD = table(d, 30);
+        }
+        codes(fixedL, fixedD);
+      } else if(type === 2){
+        var nlen = bits(5) + 257, ndist = bits(5) + 1, ncode = bits(4) + 4;
+        var lens = new Array(320).fill(0), j;
+        for(j = 0; j < ncode; j++) lens[CLORD[j]] = bits(3);
+        var lencode = table(lens, 19);
+        lens = new Array(320).fill(0);
+        j = 0;
+        while(j < nlen + ndist){
+          var sym = decode(lencode);
+          if(sym < 16){ lens[j++] = sym; continue; }
+          var rep = 0, val = 0;
+          if(sym === 16){ if(!j) throw new Error('deflate: repeat with no length'); val = lens[j - 1]; rep = 3 + bits(2); }
+          else if(sym === 17) rep = 3 + bits(3);
+          else rep = 11 + bits(7);
+          if(j + rep > nlen + ndist) throw new Error('deflate: too many lengths');
+          while(rep--) lens[j++] = val;
+        }
+        codes(table(lens.slice(0, nlen), nlen), table(lens.slice(nlen, nlen + ndist), ndist));
+      } else throw new Error('deflate: bad block type');
+    } while(!last);
+    return new Uint8Array(out);
+  }
+  function viaStream(Ctor, mode, bytes){
+    var s = new Ctor(mode);
+    var w = s.writable.getWriter();
+    w.write(bytes).catch(function(){}); w.close().catch(function(){});
+    return new Response(s.readable).arrayBuffer().then(function(b){ return new Uint8Array(b); });
+  }
+  function inflate(bytes){
+    if(typeof DecompressionStream === 'function'){
+      try {
+        return viaStream(DecompressionStream, 'deflate-raw', bytes)
+          .catch(function(){ return inflateRaw(bytes); });
+      } catch(e){ /* 'deflate-raw' unsupported: fall through */ }
+    }
+    return Promise.resolve().then(function(){ return inflateRaw(bytes); });
+  }
+  function canDeflate(){
+    if(typeof CompressionStream !== 'function') return false;
+    try { new CompressionStream('deflate-raw'); return true; } catch(e){ return false; }
+  }
+
+  // Resolves to {tracks, i, p, sid, c, n, own, ver} or {bad:true}, or null when
+  // the string carries no handoff at all.
+  function parseHandoff(str){
+    var P = params(str);
+    var n = parseInt(P.n, 10); if(!(n > 0)) n = 1;
+    var c = parseInt(P.c, 10); if(!(c > 0)) c = 1;
+    var meta = { sid: P.s || null, c: c, n: n, own: P.o === '1', ver: 1 };
+    var job;
+    if(P.v === '2' && P.d){
+      meta.ver = 2;
+      job = Promise.resolve().then(function(){ return inflate(b64ToBytes(P.d)); })
+        .then(function(b){ return JSON.parse(utf8Decode(b)); });
+    } else if(P.q){
+      job = Promise.resolve().then(function(){ return JSON.parse(utf8Decode(b64ToBytes(P.q))); });
+    } else return Promise.resolve(null);
+    return job.then(function(obj){ return toIncoming(obj, meta); })
+      .catch(function(){ return { bad: true, own: meta.own }; });
+  }
+  function toIncoming(obj, meta){
+    if(!obj || typeof obj !== 'object' || !Array.isArray(obj.t)) return { bad: true, own: meta.own };
+    var base = typeof obj.b === 'string' ? obj.b : '';
+    var ci = typeof obj.i === 'number' ? obj.i : -1;
+    var curUrl = null, tracks = [];
+    obj.t.forEach(function(x, k){
+      if(!Array.isArray(x)) return;
+      var url = base + String(x[1] == null ? '' : x[1]);
+      var t = cleanTrack({ title: x[0], url: url, site: x[2] });
+      if(!t) return;
+      if(k === ci) curUrl = t.url;
+      tracks.push(t);
+    });
+    var p = Math.max(0, Math.floor(+obj.p || 0));
+    return { tracks: tracks, i: curUrl ? tracks.findIndex(function(t){ return t.url === curUrl; }) : -1,
+             p: curUrl ? p : 0, sid: meta.sid, c: meta.c, n: meta.n, own: meta.own, ver: meta.ver };
+  }
+
+  function commonPrefix(urls){
+    var pre = urls.length ? urls[0] : '';
+    for(var i = 1; i < urls.length && pre; i++){
+      var j = 0;
+      while(j < pre.length && j < urls[i].length && pre.charAt(j) === urls[i].charAt(j)) j++;
+      pre = pre.slice(0, j);
+    }
+    return pre;
+  }
+  // The fragment (no '#') for a queue: v2 when this browser can compress, else v1.
+  function encodeFragment(list, cur, pos){
+    var pre = commonPrefix(list.map(function(t){ return t.url; }));
+    var obj = {
+      b: pre,
+      t: list.map(function(t){ return [t.title || '', t.url.slice(pre.length), t.site || '']; }),
+      i: cur >= 0 && cur < list.length ? cur : -1,
+      p: cur >= 0 ? Math.max(0, Math.floor(pos || 0)) : 0
+    };
+    var bytes = utf8Encode(JSON.stringify(obj));
+    if(canDeflate()){
+      return viaStream(CompressionStream, 'deflate-raw', bytes)
+        .then(function(z){ return 'v=2&d=' + bytesToB64(z); })
+        .catch(function(){ return 'q=' + bytesToB64(bytes); });
+    }
+    return Promise.resolve('q=' + bytesToB64(bytes));
+  }
+
+  /* Keep the live queue in the URL as well as in localStorage. Some browsers
+     (Brave's Forgetful Browsing, private windows, in-app webviews) accept the
+     save and wipe it between visits; a queue in the hash travels with the page,
+     so reload, history and bookmarks still restore it. replaceState keeps it out
+     of the history stack and never fires hashchange. The &o=1 marks it as ours. */
+  var hashSeq = 0, hashT = null;
+  function clearHash(){ try { history.replaceState(null, '', location.pathname + location.search); } catch(e){} }
+  function syncHashSoon(){ clearTimeout(hashT); hashT = setTimeout(syncHash, 300); }
+  function syncHash(){
+    clearTimeout(hashT);
+    var seq = ++hashSeq;
+    if(!queue.length){ clearHash(); return; }
+    encodeFragment(queue, idx, curPos()).then(function(frag){
+      if(seq !== hashSeq || frag.length > MAX_HASH) return;
+      try { history.replaceState(null, '', location.pathname + location.search + '#' + frag + '&o=1'); } catch(e){}
+    });
+  }
 
   /* ---------- multi-part reassembly ----------
-     A queue too large for one QR is split across several codes on the computer.
-     Each scan opens this page afresh — phones tend to spawn a new tab per scan —
-     so the parts can't accumulate in memory. They pool in localStorage under the
-     transfer's session id, and whichever scan completes the set boots the player
-     with the whole queue. Abandoned pools are swept so they never linger. */
-  var XKEY = 'afp_xfer_';
-  var XTTL = 15 * 60 * 1000;
-
+     A queue too large for one QR is split across codes. Each camera-app scan
+     opens this page afresh, so parts pool in localStorage under the transfer's
+     id; whichever scan completes the set hands over the whole queue. Parts are
+     keyed by number, so seeing the same code again changes nothing. */
   function xferSweep(){
     var now = Date.now(), rm = [];
     try {
@@ -447,268 +924,855 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
     } catch(e){}
     rm.forEach(function(k){ try { localStorage.removeItem(k); } catch(e){} });
   }
-
-  function showReceiving(have, n){
-    $('app').style.display = 'none';
-    $('empty').style.display = 'none';
-    $('recv').style.display = 'flex';
-    $('recvh').textContent = 'Receiving… ' + have + ' of ' + n;
-    $('recvp').textContent = 'Scan the next code on your computer.';
-    $('recvcount').textContent = have + ' / ' + n;
-    $('recvfill').style.width = Math.round(have / n * 100) + '%';
-  }
-
-  /* Fold one handoff part into its session pool and report progress.
-
-     Shared by the URL path (one code per scan, page reloads each time) and the
-     camera scanner (many codes in one sitting, no reload). Parts are keyed by
-     index, so seeing the same frame repeatedly — which the scanner does
-     constantly while the PC loops its codes — is idempotent.
-
-     Returns {done, have, n, tracks} where tracks is set only once complete. */
+  // -> {done, have, n, got:[part numbers], tracks, cur (url), p}
   function ingest(inc){
-    if(!inc || !inc.tracks || !inc.tracks.length) return null;
-
-    if(inc.n <= 1 || !inc.sid){
-      return { done: true, have: 1, n: 1, tracks: inc.tracks };
-    }
-
+    var cur = inc.i >= 0 && inc.tracks[inc.i] ? inc.tracks[inc.i].url : null;
+    if(inc.n <= 1 || !inc.sid) return { done: true, have: 1, n: 1, got: [1], tracks: inc.tracks, cur: cur, p: inc.p };
     xferSweep();
-    var bucket = null;
-    try { bucket = JSON.parse(localStorage.getItem(XKEY + inc.sid)); } catch(e){}
-    if(!bucket || bucket.n !== inc.n) bucket = { n: inc.n, parts: {}, ts: Date.now() };
-    bucket.parts[inc.c] = inc.tracks;
+    var key = XKEY + inc.sid, bucket = null;
+    try { bucket = JSON.parse(localStorage.getItem(key)); } catch(e){}
+    if(!bucket || bucket.n !== inc.n || !bucket.parts) bucket = { n: inc.n, parts: {}, ts: Date.now() };
+    bucket.parts[inc.c] = { t: inc.tracks, cur: cur, p: inc.p || 0 };
     bucket.ts = Date.now();
-    try { localStorage.setItem(XKEY + inc.sid, JSON.stringify(bucket)); } catch(e){}
-
-    var have = 0; for(var key in bucket.parts) if(bucket.parts.hasOwnProperty(key)) have++;
-    if(have < inc.n) return { done: false, have: have, n: inc.n, tracks: null };
-
-    // Every part is in — stitch them in order and drop any duplicate url.
-    var seen = {}, list = [];
-    for(var p = 1; p <= inc.n; p++){
-      (bucket.parts[p] || []).forEach(function(t){ if(!seen[t.url]){ seen[t.url] = 1; list.push(t); } });
+    try { localStorage.setItem(key, JSON.stringify(bucket)); } catch(e){}
+    var got = [];
+    for(var k = 1; k <= inc.n; k++) if(bucket.parts[k]) got.push(k);
+    if(got.length < inc.n) return { done: false, have: got.length, n: inc.n, got: got };
+    var seen = {}, list = [], c = null, p = 0;
+    for(var q = 1; q <= inc.n; q++){
+      var part = bucket.parts[q];
+      var arr = Array.isArray(part) ? part : (part && part.t) || [];   // arrays: pools from the old page
+      if(part && part.cur && !c){ c = part.cur; p = part.p || 0; }
+      arr.forEach(function(t){ t = cleanTrack(t); if(t && !seen[t.url]){ seen[t.url] = 1; list.push(t); } });
     }
-    try { localStorage.removeItem(XKEY + inc.sid); } catch(e){}
-    return { done: true, have: inc.n, n: inc.n, tracks: list };
-  }
-
-  function handleIncoming(inc){
-    if(!inc || !inc.tracks || !inc.tracks.length) return false;
-    // Strip the payload so a reload or accidental share-back never re-imports it.
-    history.replaceState(null, '', location.pathname + location.search);
-
-    var r = ingest(inc);
-    if(!r) return false;
-    if(!r.done){ showReceiving(r.have, r.n); return true; }
-
-    var added = receive(r.tracks);
-    toast(added ? ('Added ' + added + ' track' + (added > 1 ? 's' : ''))
-                : 'Already in your queue');
-    return true;
+    try { localStorage.removeItem(key); } catch(e){}
+    return { done: true, have: inc.n, n: inc.n, got: got, tracks: list, cur: c, p: p };
   }
 
   /* ---------- persistence ----------
-     The queue was already being written on every track change and on
-     pagehide/visibilitychange, so "it forgot my queue" was never a missing
-     save. It is the browser DELETING the save.
-
-     Mobile browsers evict script-writable storage on their own schedule. Safari
-     is the strict one: storage for a site you have not interacted with as
-     first-party is wiped after 7 days, which is exactly the "worked, then later
-     asked for the QR again" pattern. Chrome/Android evicts under storage
-     pressure. Nothing about how often we call setItem changes that.
-
-     What does change it is asking for persistent storage. A granted origin is
-     exempt from routine eviction, which is the actual fix. It is a request, not
-     a guarantee — browsers weigh engagement, and installing to the home screen
-     is what most reliably tips it. */
+     Mobile browsers evict script-writable storage on their own schedule (Safari
+     after 7 days without a visit). Asking for persistent storage is the actual
+     fix; installing to the home screen is what most reliably earns it. */
   (function requestDurableStorage(){
     try {
       if(navigator.storage && navigator.storage.persist){
-        navigator.storage.persisted().then(function(already){
-          if(!already) return navigator.storage.persist();
-        }).catch(function(){});
+        navigator.storage.persisted().then(function(already){ if(!already) return navigator.storage.persist(); }).catch(function(){});
       }
     } catch(e){}
   })();
-
-  // Why saving failed, if it did. This used to be swallowed silently, which is
-  // exactly why "it forgets my queue" was undiagnosable — the page could be
-  // failing every single write and still look completely normal.
-  var saveErr = null, saveOk = 0;
+  var saveErr = null;
+  function curPos(){
+    if(pendingSeek != null && !(audio.currentTime > 0.5)) return pendingSeek;
+    var c = audio.currentTime;
+    return isFinite(c) ? c : 0;
+  }
   function save(){
     try {
       localStorage.setItem(STORE, JSON.stringify({
-        queue: queue, idx: idx,
-        pos: audio && isFinite(audio.currentTime) ? audio.currentTime : 0,
-        ts: Date.now()
+        queue: queue.map(function(t){ return { title: t.title, url: t.url, site: t.site || '' }; }),
+        idx: idx, pos: curPos(), ts: Date.now(),
+        shuffle: shuffling, repeat: repeat, rate: rate
       }));
-      saveErr = null; saveOk = Date.now();
-    } catch(e){
-      saveErr = (e && (e.name || e.message)) || 'unknown';
-    }
+      saveErr = null;
+    } catch(e){ saveErr = (e && (e.name || e.message)) || 'unknown'; }
   }
-
-  /* Does this browser actually give us durable storage? Private windows and
-     some in-app webviews expose localStorage but throw on write or wipe it when
-     the view closes, and both look identical to "the queue vanished". */
+  // Position moves constantly; throttled so resume is accurate to a few seconds
+  // without hammering synchronous storage several times a second.
+  var lastSave = 0;
+  function saveSoon(){ var now = Date.now(); if(now - lastSave < 5000) return; lastSave = now; save(); }
+  function load(){ try { var raw = localStorage.getItem(STORE); return raw ? JSON.parse(raw) : null; } catch(e){ return null; } }
   function storageProbe(){
     try {
-      var k = '__afp_probe';
-      localStorage.setItem(k, '1');
-      var ok = localStorage.getItem(k) === '1';
-      localStorage.removeItem(k);
+      localStorage.setItem('__afp_probe', '1');
+      var ok = localStorage.getItem('__afp_probe') === '1';
+      localStorage.removeItem('__afp_probe');
       return ok ? 'ok' : 'readback failed';
-    } catch(e){
-      return 'blocked (' + ((e && e.name) || 'error') + ')';
-    }
-  }
-  // Position moves constantly; writing it on every timeupdate would hit
-  // localStorage several times a second. Throttled so resume is accurate to a
-  // few seconds without hammering synchronous storage on the main thread.
-  var lastSave = 0;
-  function saveSoon(){
-    var now = Date.now();
-    if(now - lastSave < 5000) return;
-    lastSave = now;
-    save();
-  }
-  function load(){
-    try {
-      var raw = localStorage.getItem(STORE);
-      if(!raw) return null;
-      return JSON.parse(raw);
-    } catch(e){ return null; }
+    } catch(e){ return 'blocked (' + ((e && e.name) || 'error') + ')'; }
   }
 
-  /* ---------- export / import / link ----------
-     Formats match the desktop player exactly, so a queue exported on either side
-     imports on the other. The link is the useful one on a phone: it carries the
-     whole queue in its hash, so pasting it into notes gives you a restore path
-     that survives the browser clearing site storage. */
-
-  function b64url(s){
-    return btoa(unescape(encodeURIComponent(s)))
-      .replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  /* ---------- queue ---------- */
+  function findUrl(u){ for(var i = 0; i < queue.length; i++) if(queue[i].url === u) return i; return -1; }
+  function clampIdx(i){ i = parseInt(i, 10); return (i >= 0 && i < queue.length) ? i : 0; }
+  function setQueue(list){
+    queue = [];
+    var seen = {};
+    (list || []).forEach(function(t){ t = cleanTrack(t); if(t && !seen[t.url]){ seen[t.url] = 1; queue.push(t); } });
+    idx = -1; sorder = [];
+    renderQueue();
   }
-  // Fold the shared URL prefix out — tracks from one host overlap heavily, and
-  // the hash gets long fast otherwise. Mirrors encodeQueue() on the desktop.
-  function encodeQueue(list){
-    var urls = list.map(function(t){ return t.url; });
-    var pre = urls.length ? urls[0] : '';
-    for(var i = 1; i < urls.length; i++){
-      var j = 0;
-      while(j < pre.length && j < urls[i].length && pre.charAt(j) === urls[i].charAt(j)) j++;
-      pre = pre.slice(0, j);
-      if(!pre) break;
-    }
-    return b64url(JSON.stringify({
-      b: pre,
-      t: list.map(function(t){ return [t.title || '', t.url.slice(pre.length)]; })
-    }));
-  }
-  function queueLink(){
-    return location.origin + location.pathname + '#q=' + encodeQueue(queue);
-  }
-
-  /* Keep the live queue in the URL, not only in localStorage.
-
-     The diagnostic settled it: storage probes fine, and the saved queue reads
-     back as 0 tracks — writes are accepted and then wiped between visits. Brave
-     does this by design (Forgetful Browsing clears first-party storage shortly
-     after you leave a site), and private windows and some in-app webviews behave
-     the same way. Saving more often cannot win that argument.
-
-     A queue encoded in the hash travels with the page itself, so reloading, the
-     back button, history and bookmarks all restore it with no storage involved.
-     replaceState keeps it out of the history stack, so this never hijacks Back.
-     Merging on read makes re-importing your own hash a no-op. */
-  var MAX_HASH = 30000;     // beyond this the URL becomes unwieldy; storage only
-  function syncHash(){
-    try {
-      if(!queue.length){
-        history.replaceState(null, '', location.pathname + location.search);
+  // Appends, dedupes by URL, leaves what is playing alone. A duplicate still
+  // picks up a newer title or a site it lacked.
+  function merge(list){
+    var added = 0, firstNew = queue.length;
+    (list || []).forEach(function(t){
+      t = cleanTrack(t); if(!t) return;
+      var at = findUrl(t.url);
+      if(at >= 0){
+        var q = queue[at];
+        if(t.site && !q.site) q.site = t.site;
+        if(t.title && t.title !== q.title && t.title !== nameFromUrl(t.url)) q.title = t.title;
         return;
       }
-      var enc = encodeQueue(queue);
-      if(enc.length > MAX_HASH) return;
-      history.replaceState(null, '', location.pathname + location.search + '#q=' + enc);
-    } catch(e){}
+      queue.push(t); added++;
+    });
+    if(added && shuffling && sorder.length){
+      for(var k = firstNew; k < queue.length; k++){
+        var at2 = Math.max(sorder.indexOf(idx) + 1, 0);
+        sorder.splice(at2 + Math.floor(Math.random() * (sorder.length - at2 + 1)), 0, k);
+      }
+    }
+    renderQueue(); renderNow(true); save();
+    return added;
+  }
+  function buildOrder(){
+    var rest = [];
+    for(var i = 0; i < queue.length; i++) if(i !== idx) rest.push(i);
+    for(var j = rest.length - 1; j > 0; j--){ var r = Math.floor(Math.random() * (j + 1)); var tmp = rest[j]; rest[j] = rest[r]; rest[r] = tmp; }
+    sorder = idx >= 0 ? [idx].concat(rest) : rest;
+  }
+  function order(){
+    if(!shuffling) return null;
+    if(sorder.length !== queue.length) buildOrder();
+    return sorder;
+  }
+  // The next (dir 1) or previous (-1) index in play order, skipping tracks that
+  // already failed. Wraps only on repeat-all. null when there is nowhere to go.
+  function stepIndex(dir, from){
+    var n = queue.length; if(!n) return null;
+    var cur = from == null ? idx : from;
+    var ord = order();
+    var pos = ord ? ord.indexOf(cur) : cur;
+    if(pos < 0) pos = dir > 0 ? -1 : n;
+    for(var k = 1; k <= n; k++){
+      var p = pos + dir * k;
+      if(p < 0 || p >= n){ if(repeat !== 'all') return null; p = ((p % n) + n) % n; }
+      var j = ord ? ord[p] : p;
+      if(queue[j].dead && j !== cur) continue;
+      if(j === cur && n > 1) continue;
+      return j;
+    }
+    return null;
+  }
+  function upcoming(k){
+    var out = [], from = idx;
+    for(var guard = 0; out.length < k && guard < queue.length; guard++){
+      var n = stepRaw(from);
+      if(n == null || n === idx || out.indexOf(n) >= 0) break;
+      out.push(n); from = n;
+    }
+    return out;
+  }
+  // Like stepIndex(1) but without skipping failed tracks, for the Up next list.
+  function stepRaw(from){
+    var n = queue.length, ord = order();
+    var pos = ord ? ord.indexOf(from) : from;
+    var p = pos + 1;
+    if(p >= n){ if(repeat !== 'all') return null; p = 0; }
+    return ord ? ord[p] : p;
   }
 
+  /* ---------- rendering ---------- */
+  var ICON_PLAY  = '<svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><polygon points="8 4.8 19.5 12 8 19.2"/></svg>';
+  var ICON_PAUSE = '<svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4.5" width="4.2" height="15" rx="1.3"/><rect x="13.8" y="4.5" width="4.2" height="15" rx="1.3"/></svg>';
+  var ICON_X = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+  var shownArt = null;
+  function renderNow(soft){
+    var t = queue[idx];
+    applyTone(t);
+    $('nt').textContent = t ? t.title : 'Nothing loaded';
+    $('ns').textContent = t ? fromLine(t) : '';
+    var key = t ? t.url + '|' + t.title : '';
+    if(key !== shownArt){ shownArt = key; $('artimg').innerHTML = t ? artSVG(t) : ''; }
+    document.title = t ? t.title + ' · BumbleTap Player' : 'BumbleTap Player';
+    if(!soft) renderTime(pendingSeek);
+    if(gateUp) updateGate();
+  }
+  function setFill(p){
+    var pct = (Math.max(0, Math.min(1, p)) * 100) + '%';
+    $('sf').style.width = pct; $('sth').style.left = pct;
+  }
+  function renderTime(at){
+    var d = audio.duration, ok = isFinite(d) && d > 0;
+    var c = at != null ? at : audio.currentTime;
+    if(!isFinite(c)) c = 0;
+    $('tc').textContent = fmt(c);
+    $('td').textContent = ok ? fmt(d) : '--:--';
+    setFill(ok ? c / d : 0);
+    var s = $('seek');
+    s.setAttribute('aria-valuemax', ok ? Math.round(d) : 0);
+    s.setAttribute('aria-valuenow', Math.round(c));
+    s.setAttribute('aria-valuetext', fmt(c) + (ok ? ' of ' + fmt(d) : ''));
+  }
+  function setPlayingUI(on){
+    playing = on;
+    $('pp').innerHTML = on ? ICON_PAUSE : ICON_PLAY;
+    $('pp').setAttribute('aria-label', on ? 'Pause' : 'Play');
+    $('art').classList.toggle('on', on);
+    document.body.classList.toggle('is-playing', on);
+    if('mediaSession' in navigator){ try { navigator.mediaSession.playbackState = on ? 'playing' : 'paused'; } catch(e){} }
+  }
+  function renderQueue(){
+    var n = queue.length;
+    $('qc').textContent = n;
+    $('qcl').textContent = n === 1 ? 'track' : 'tracks';
+    $('sheetmeta').textContent = plural(n, 'track');
+    var list = $('q');
+    list.innerHTML = '';
+    var rows = qExpanded ? queue.map(function(_, i){ return i; }) : upcoming(3);
+    rows.forEach(function(i){ list.appendChild(row(i, qExpanded)); });
+    if(!rows.length){
+      var li = document.createElement('li');
+      li.className = 'qempty';
+      li.textContent = n > 1 ? 'Nothing after this one. Turn on repeat to go round again.' : 'Nothing after this one.';
+      list.appendChild(li);
+    }
+    $('unmeta').textContent = qExpanded ? 'All ' + n : (shuffling ? 'Shuffled' : (repeat === 'all' ? 'Repeating' : ''));
+    var all = $('qall');
+    all.hidden = n < 2;
+    all.textContent = qExpanded ? 'Show less' : 'Show all ' + n;
+    all.setAttribute('aria-expanded', qExpanded ? 'true' : 'false');
+  }
+  function row(i, numbered){
+    var t = queue[i];
+    var li = document.createElement('li');
+    li.className = 'qi' + (i === idx ? ' cur' : '');
+    var main = document.createElement('button');
+    main.type = 'button'; main.className = 'qi-main';
+    if(i === idx) main.setAttribute('aria-current', 'true');
+    if(numbered){ var num = document.createElement('span'); num.className = 'qi-n'; num.textContent = i + 1; main.appendChild(num); }
+    var art = document.createElement('span'); art.className = 'qi-art';
+    art.innerHTML = artSVG(t) + '<span class="eq" aria-hidden="true"><i></i><i></i><i></i></span>';
+    var tx = document.createElement('span'); tx.className = 'qi-tx';
+    var tt = document.createElement('span'); tt.className = 'qi-t'; tt.textContent = t.title;
+    var ss = document.createElement('span'); ss.className = 'qi-s';
+    if(t.dead){ var tag = document.createElement('b'); tag.className = 'tag'; tag.textContent = "Can't play"; ss.appendChild(tag); }
+    var site = document.createElement('span'); site.textContent = t.dead ? t.dead : fromLine(t); ss.appendChild(site);
+    tx.appendChild(tt); tx.appendChild(ss);
+    main.appendChild(art); main.appendChild(tx);
+    main.addEventListener('click', function(){
+      activated = true;
+      // The current row resumes rather than restarting the track.
+      if(i === idx && !audio.error && audio.getAttribute('src')){ if(audio.paused){ clearErr(); tryPlay(); } return; }
+      begin(i, 0);
+    });
+    var x = document.createElement('button');
+    x.type = 'button'; x.className = 'qi-x'; x.innerHTML = ICON_X;
+    x.setAttribute('aria-label', 'Remove ' + t.title);
+    x.addEventListener('click', function(){ removeAt(i); });
+    li.appendChild(main); li.appendChild(x);
+    return li;
+  }
+  function renderChips(){
+    $('shuf').classList.toggle('on', shuffling);
+    $('shuf').setAttribute('aria-pressed', shuffling ? 'true' : 'false');
+    $('lp').classList.toggle('on', repeat !== 'off');
+    $('lp1').hidden = repeat !== 'one';
+    $('lp').setAttribute('aria-label', 'Repeat: ' + repeat);
+    var r = (rate === 1 ? '1' : String(rate)) + '×';
+    $('spdl').textContent = r;
+    $('spd').classList.toggle('on', rate !== 1);
+    $('spd').setAttribute('aria-label', 'Playback speed ' + r);
+    renderSleep();
+  }
+  function showApp(){ $('empty').hidden = true; $('app').hidden = false; }
+  function showEmpty(){
+    $('app').hidden = true; $('empty').hidden = false;
+    var stack = $('stack').children;
+    [[0, ''], [4, ''], [2, null]].forEach(function(s, k){ stack[k].innerHTML = artSVG({ url: 'empty' + k, title: '' }, s[0], s[1]); });
+    var probe = storageProbe(), stored = 0;
+    try { var raw = localStorage.getItem(STORE); stored = raw ? (JSON.parse(raw).queue || []).length : 0; } catch(e){}
+    var line = 'Storage: ' + probe + ' · saved queue: ' + plural(stored, 'track') + (saveErr ? ' · last write failed: ' + saveErr : '');
+    // Writes work but nothing survived: the browser clears site data between
+    // visits. The remedy is a browser setting, so say which one.
+    if(probe === 'ok' && !stored){
+      line += '\n\nIf you had a queue here before, your browser cleared it. In Brave, turn off Forget for this site in Shields, or add this page to your home screen. A copied queue link restores it any time.';
+    }
+    $('diag').textContent = line;
+    $('diag').hidden = false;
+  }
+
+  /* ---------- playback ---------- */
+  function loadTrack(i, pos){
+    if(i < 0 || i >= queue.length) return;
+    clearErr();
+    idx = i;
+    var t = queue[i];
+    loadTok++;
+    pendingSeek = pos > 0 ? pos : null;
+    // One <audio> element for the whole session, with only its src changing:
+    // iOS ties the "a person started this" unlock to the element, so a fresh
+    // element per track would need a fresh tap for every auto-advance.
+    audio.defaultPlaybackRate = rate;
+    audio.src = t.url;
+    try { audio.playbackRate = rate; } catch(e){}
+    setPlayingUI(false);
+    renderNow(); renderQueue(); msMeta(t);
+    save(); syncHashSoon();
+  }
+  function tryPlay(sum){
+    if(sum) gateSum = sum;
+    var tok = loadTok, p;
+    try { p = audio.play(); } catch(e){ return; }
+    if(p && p.then) p.then(function(){ activated = true; if(gateUp) hideGate(); }, function(e){
+      if(tok !== loadTok) return;
+      // Only a refusal to autoplay earns the start screen. A track that fails to
+      // load rejects here too, but it is reported through the 'error' event.
+      if(e && e.name === 'NotAllowedError') showGate();
+    });
+  }
+  function begin(i, pos, sum){
+    if(!queue.length) return;
+    showApp();
+    loadTrack(clampIdx(i), pos);
+    tryPlay(sum);
+  }
+  function toggle(){
+    if(idx < 0){ if(queue.length){ activated = true; begin(0, 0); } return; }
+    if(audio.paused){
+      activated = true;
+      if(audio.error || !audio.getAttribute('src')) loadTrack(idx, curPos());
+      clearErr();
+      tryPlay();
+    } else audio.pause();
+  }
+  function seekAbs(t){
+    var d = audio.duration;
+    if(!isFinite(d) || d <= 0){ pendingSeek = Math.max(0, t); renderTime(pendingSeek); return; }
+    t = Math.max(0, Math.min(d, t));
+    try { audio.currentTime = t; } catch(e){}
+    renderTime(t); msPos();
+  }
+  function seekBy(dt){ seekAbs((audio.currentTime || 0) + dt); }
+  function doNext(){
+    var n = stepIndex(1);
+    if(n == null){ toast(queue.length > 1 ? 'That was the last track' : 'Nothing else in the queue'); return; }
+    activated = true; begin(n, 0);
+  }
+  function doPrev(direct){
+    if(!direct && audio.currentTime > 3){ seekAbs(0); return; }
+    var n = stepIndex(-1);
+    if(n == null){ seekAbs(0); return; }
+    activated = true; begin(n, 0);
+  }
+
+  audio.addEventListener('loadedmetadata', function(){
+    if(pendingSeek != null){
+      if(pendingSeek < audio.duration - 2){ try { audio.currentTime = pendingSeek; } catch(e){} }
+      else pendingSeek = null;
+    }
+    renderTime(pendingSeek); msPos();
+  });
+  audio.addEventListener('durationchange', function(){ if(!seeking) renderTime(pendingSeek != null && !(audio.currentTime > 0.5) ? pendingSeek : null); });
+  audio.addEventListener('playing', function(){
+    // iOS can drop a seek made before playback started; apply it again.
+    if(pendingSeek != null){
+      if(Math.abs(audio.currentTime - pendingSeek) > 2 && pendingSeek < audio.duration - 2){ try { audio.currentTime = pendingSeek; } catch(e){} }
+      pendingSeek = null;
+    }
+    var t = queue[idx];
+    if(t && t.dead){ delete t.dead; renderQueue(); }
+  });
+  audio.addEventListener('timeupdate', function(){
+    if(!seeking) renderTime(pendingSeek != null && !(audio.currentTime > 0.5) ? pendingSeek : null);
+    saveSoon(); checkSleep();
+  });
+  audio.addEventListener('play', function(){ setPlayingUI(true); msPos(); });
+  audio.addEventListener('pause', function(){ setPlayingUI(false); msPos(); save(); syncHashSoon(); });
+  audio.addEventListener('ratechange', msPos);
+  audio.addEventListener('seeked', msPos);
+  audio.addEventListener('ended', function(){
+    setPlayingUI(false);
+    if(sleepMode === 'end'){
+      setSleep('off', true);
+      var nx = stepIndex(1);
+      if(nx != null) loadTrack(nx, 0);       // ready for the morning, not playing
+      toast('Sleep timer: paused at the end of the track');
+      save(); return;
+    }
+    if(repeat === 'one'){ try { audio.currentTime = 0; } catch(e){} tryPlay(); return; }
+    var n = stepIndex(1);
+    if(n == null){ save(); return; }
+    begin(n, 0);
+  });
+  audio.addEventListener('error', onMediaError);
+
+  /* ---------- errors ----------
+     A dead track used to stop the queue under a generic "could not load". Now
+     the card says why, offers what can be done, and moves on after 4s unless
+     someone touches it. */
+  function isLocalHost(h){
+    h = String(h || '').toLowerCase().replace(/^\[|\]$/g, '');
+    return h === 'localhost' || /\.(local|lan|home|internal)$/.test(h) || /^127\./.test(h) || /^10\./.test(h)
+      || /^192\.168\./.test(h) || /^169\.254\./.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h) || h === '::1' || /^f[cd][0-9a-f]{2}:/.test(h);
+  }
+  function looksSigned(u){ return /[?&](expires|x-amz-expires|x-amz-signature|signature|sig|token|policy|key-pair-id|hdnts|hdnea|exp)=/i.test(u.search); }
+  // What the server says, where it will say anything: a CORS HEAD gives the
+  // status; failing that, an opaque HEAD tells "answered" from "unreachable".
+  function probe(url){
+    if(!window.fetch) return Promise.resolve({});
+    var timeout = new Promise(function(res){ setTimeout(function(){ res({}); }, 1800); });
+    var chain = fetch(url, { method: 'HEAD', mode: 'cors', cache: 'no-store' })
+      .then(function(r){ return { status: r.status }; })
+      .catch(function(){
+        return fetch(url, { method: 'HEAD', mode: 'no-cors', cache: 'no-store', credentials: 'include' })
+          .then(function(){ return { reachable: true }; }, function(){ return { reachable: false }; });
+      });
+    return Promise.race([chain, timeout]);
+  }
+  function diagnose(t, me){
+    var u = null; try { u = new URL(t.url); } catch(e){}
+    if(!u) return Promise.resolve({ text: "The link isn't a valid web address.", short: 'Not a valid link' });
+    if(u.protocol === 'http:' && location.protocol === 'https:')
+      return Promise.resolve({ text: "It's an http link, which this secure page can't load. Open the link to play it in your browser.", short: 'http link', act: 'link' });
+    if(me && me.code === 2)
+      return Promise.resolve({ text: 'The connection dropped while it loaded. Check your signal, then try again.', short: 'Connection dropped', act: 'retry' });
+    return probe(t.url).then(function(r){
+      var st = r.status || 0;
+      if(st === 404 || st === 410) return { text: 'The file is no longer on the server (error ' + st + ').', short: 'Gone from the server' };
+      if(st >= 200 && st < 300) return { text: "The file isn't audio this phone can play.", short: 'Unsupported file' };
+      if(r.reachable === false && !st){
+        if(isLocalHost(u.hostname)) return { text: 'It lives on ' + u.hostname + ', a local address only your computer can reach.', short: 'Local address' };
+        return { text: "The server didn't answer. Check your connection, then try again.", short: 'No answer', act: 'retry' };
+      }
+      if(looksSigned(u)) return { text: 'The link has expired. Send the queue again from your computer.', short: 'Link expired' };
+      if(t.site) return { text: 'It only plays on ' + t.site + '.', short: 'Only plays on ' + t.site, act: 'page' };
+      return { text: 'The server refused it. It may only play on the page you found it on, or the link has expired.', short: 'Refused by the server' };
+    });
+  }
+  function onMediaError(){
+    var t = queue[idx];
+    if(!t || !audio.getAttribute('src')) return;
+    var tok = loadTok, me = audio.error;
+    setPlayingUI(false);
+    // Nobody can touch a card on a locked screen: move on straight away and
+    // keep the sound going rather than waiting out the countdown.
+    if(document.hidden && activated){
+      var nx = stepIndex(1);
+      t.dead = 'Unavailable';
+      if(nx != null){ begin(nx, 0); diagnose(t, me).then(function(w){ t.dead = w.short; renderQueue(); }); return; }
+    }
+    diagnose(t, me).then(function(why){
+      if(tok !== loadTok) return;
+      t.dead = why.short;
+      renderQueue();
+      if(!activated){
+        // Nothing has played yet, so don't stop on a dead track: move on to the
+        // next one (the start screen, if the browser wants a tap, says what was
+        // skipped). Works whichever arrives first, this error or the refusal.
+        var n = stepIndex(1);
+        if(n != null){
+          gateSkipped.push({ title: t.title, why: why.short });
+          loadTrack(n, 0);
+          if(gateUp) updateGate();
+          tryPlay();
+          return;
+        }
+        hideGate();          // never on top of an error
+      }
+      showErr(t, why);
+    });
+  }
+  function showErr(t, why){
+    errInfo = { t: t, why: why };
+    $('errp').textContent = why.text;
+    var act = $('erract');
+    act.hidden = !why.act;
+    act.textContent = why.act === 'page' ? 'Open page' : why.act === 'link' ? 'Open link' : 'Try again';
+    var next = stepIndex(1);
+    $('errskip').hidden = next == null;
+    $('err').classList.add('show');
+    $('art').classList.add('has-err');
+    hideGate();
+    if(next == null){ errDeadline = 0; $('errc').textContent = 'Nothing after it can play here.'; return; }
+    errHeld = false;
+    errDeadline = Date.now() + 4000;
+    tickErr();
+  }
+  function tickErr(){
+    clearTimeout(errTimer);
+    if(errHeld || !errDeadline) return;
+    var left = Math.ceil((errDeadline - Date.now()) / 1000);
+    if(left <= 0){ skipNow(); return; }
+    $('errc').textContent = 'Skipping in ' + left + 's. Tap to stay.';
+    errTimer = setTimeout(tickErr, 250);
+  }
+  function holdErr(){
+    if(errHeld || !errDeadline) return;
+    errHeld = true; clearTimeout(errTimer);
+    $('errc').textContent = 'Staying on this track.';
+  }
+  function clearErr(){
+    clearTimeout(errTimer); errDeadline = 0; errHeld = false; errInfo = null;
+    $('err').classList.remove('show');
+    $('art').classList.remove('has-err');
+  }
+  function skipNow(){
+    var n = stepIndex(1);
+    clearErr();
+    if(n != null) begin(n, 0);
+  }
+  $('err').addEventListener('pointerdown', holdErr);
+  $('err').addEventListener('touchstart', holdErr, { passive: true });
+  $('err').addEventListener('focusin', holdErr);
+  $('errskip').addEventListener('click', function(){ activated = true; skipNow(); });
+  $('erract').addEventListener('click', function(){
+    var e = errInfo; if(!e) return;
+    holdErr();
+    if(e.why.act === 'page') window.open('https://' + e.t.site.replace(/^https?:\/\//, '') + '/', '_blank', 'noopener');
+    else if(e.why.act === 'link') window.open(e.t.url, '_blank', 'noopener');
+    else { activated = true; begin(idx, 0); }
+  });
+
+  /* ---------- start screen ---------- */
+  function showGate(sum){
+    if(sum) gateSum = sum;
+    if($('err').classList.contains('show')) return;    // never on top of an error
+    gateUp = true;
+    updateGate();
+    $('gate').classList.add('show');
+    document.body.classList.add('locked');
+  }
+  function hideGate(){
+    if(!gateUp) return;
+    gateUp = false; gateSkipped = [];
+    $('gate').classList.remove('show');
+    if(!document.querySelector('.overlay.show')) document.body.classList.remove('locked');
+  }
+  function updateGate(){
+    var t = queue[idx]; if(!t) return;
+    var s = gateSum || { kind: 'restore' };
+    $('gatesum').textContent = s.kind === 'handoff'
+      ? plural(s.count, 'track') + ' from your computer' + (s.existing && s.added ? ', added to your queue' : '')
+      : plural(queue.length, 'track') + ' in your queue';
+    $('gateart').innerHTML = artSVG(t);
+    $('gatetxt').textContent = t.title;
+    var at = curPos();
+    $('gatesub').textContent = fromLine(t) + (at >= 1 ? (fromLine(t) ? ' · ' : '') + 'picks up at ' + fmt(at) : '');
+    var nx = upcoming(queue.length), then = '';
+    if(nx.length) then = 'Then ' + queue[nx[0]].title + (nx.length > 1 ? ' and ' + plural(nx.length - 1, 'more', 'more') : '');
+    $('gatethen').textContent = then;
+    $('gatethen').hidden = !then;
+    var sk = $('gateskip');
+    if(gateSkipped.length){
+      var g = gateSkipped[gateSkipped.length - 1];
+      sk.textContent = gateSkipped.length === 1
+        ? "Skipped “" + g.title + "”: " + g.why.charAt(0).toLowerCase() + g.why.slice(1) + '.'
+        : 'Skipped ' + gateSkipped.length + " tracks that can't play on this phone.";
+      sk.hidden = false;
+    } else sk.hidden = true;
+  }
+  $('gatebtn').addEventListener('click', function(){
+    activated = true;
+    hideGate();
+    if(idx < 0){ if(queue.length) begin(0, 0); return; }
+    if(audio.error) loadTrack(idx, curPos());
+    tryPlay();                                  // synchronously inside the tap
+  });
+
+  /* ---------- Media Session ---------- */
+  function msMeta(t){
+    if(!('mediaSession' in navigator) || !window.MediaMetadata) return;
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: t.title, artist: fromLine(t), album: 'BumbleTap Player', artwork: artPNGs(t)
+      });
+    } catch(e){}
+  }
+  function msPos(){
+    var ms = navigator.mediaSession;
+    if(!ms || !ms.setPositionState) return;
+    var d = audio.duration;
+    if(!isFinite(d) || d <= 0) return;
+    try {
+      ms.setPositionState({ duration: d, playbackRate: audio.playbackRate || 1,
+        position: Math.max(0, Math.min(d, audio.currentTime || 0)) });
+    } catch(e){}
+  }
+  (function msInit(){
+    if(!('mediaSession' in navigator)) return;
+    var set = function(a, h){ try { navigator.mediaSession.setActionHandler(a, h); } catch(e){} };
+    set('play', function(){
+      activated = true;
+      if(idx < 0){ if(queue.length) begin(0, 0); return; }
+      if(audio.error || !audio.getAttribute('src')) loadTrack(idx, curPos());
+      clearErr(); tryPlay();
+    });
+    set('pause', function(){ audio.pause(); });
+    set('previoustrack', function(){ doPrev(); });
+    set('nexttrack', function(){ doNext(); });
+    set('seekbackward', function(d){ seekBy(-((d && d.seekOffset) || 15)); });
+    set('seekforward', function(d){ seekBy((d && d.seekOffset) || 30); });
+    set('seekto', function(d){
+      if(!d || d.seekTime == null) return;
+      if(d.fastSeek && typeof audio.fastSeek === 'function'){ try { audio.fastSeek(d.seekTime); renderTime(); msPos(); return; } catch(e){} }
+      seekAbs(d.seekTime);
+    });
+    set('stop', function(){ audio.pause(); });
+  })();
+
+  /* ---------- seek bar (tap, drag, keys) ---------- */
+  function seekFrac(clientX){
+    var r = $('seek').getBoundingClientRect();
+    return Math.max(0, Math.min(1, (clientX - r.left) / r.width));
+  }
+  function seekPreview(clientX){
+    var d = audio.duration;
+    if(!isFinite(d) || d <= 0) return null;
+    var p = seekFrac(clientX);
+    setFill(p);
+    $('tc').textContent = fmt(p * d);
+    return p * d;
+  }
+  $('seek').addEventListener('pointerdown', function(e){
+    if(!isFinite(audio.duration) || audio.duration <= 0) return;
+    seeking = true;
+    $('seek').classList.add('drag');
+    try { $('seek').setPointerCapture(e.pointerId); } catch(err){}
+    seekPreview(e.clientX);
+  });
+  $('seek').addEventListener('pointermove', function(e){ if(seeking) seekPreview(e.clientX); });
+  function endSeek(e){
+    if(!seeking) return;
+    var t = seekPreview(e.clientX);
+    seeking = false;
+    $('seek').classList.remove('drag');
+    if(t != null) seekAbs(t);
+    save();
+  }
+  $('seek').addEventListener('pointerup', endSeek);
+  $('seek').addEventListener('pointercancel', function(){ seeking = false; $('seek').classList.remove('drag'); renderTime(); });
+  $('seek').addEventListener('keydown', function(e){
+    var k = e.key;
+    if(k === 'ArrowLeft' || k === 'ArrowDown'){ seekBy(-5); e.preventDefault(); }
+    else if(k === 'ArrowRight' || k === 'ArrowUp'){ seekBy(5); e.preventDefault(); }
+    else if(k === 'Home'){ seekAbs(0); e.preventDefault(); }
+    else if(k === 'End' && isFinite(audio.duration)){ seekAbs(audio.duration - 1); e.preventDefault(); }
+  });
+
+  /* ---------- controls ---------- */
+  $('pp').addEventListener('click', toggle);
+  $('prev').addEventListener('click', function(){ doPrev(); });
+  $('next').addEventListener('click', function(){ doNext(); });
+  $('b15').addEventListener('click', function(){ seekBy(-15); });
+  $('f30').addEventListener('click', function(){ seekBy(30); });
+  $('shuf').addEventListener('click', function(){
+    shuffling = !shuffling;
+    if(shuffling) buildOrder();
+    renderChips(); renderQueue(); save();
+  });
+  $('lp').addEventListener('click', function(){
+    repeat = repeat === 'off' ? 'all' : repeat === 'all' ? 'one' : 'off';
+    renderChips(); renderQueue(); save();
+    toast(repeat === 'off' ? 'Repeat off' : repeat === 'all' ? 'Repeating the queue' : 'Repeating this track');
+  });
+  $('spd').addEventListener('click', function(){
+    rate = SPEEDS[(SPEEDS.indexOf(rate) + 1) % SPEEDS.length];
+    audio.defaultPlaybackRate = rate;
+    try { audio.playbackRate = rate; } catch(e){}
+    renderChips(); save();
+  });
+  $('qall').addEventListener('click', function(){
+    qExpanded = !qExpanded; renderQueue();
+    if(!qExpanded) $('upnext').scrollIntoView({ block: 'nearest' });
+  });
+  $('hc').addEventListener('click', function(){
+    qExpanded = true; renderQueue();
+    var calm = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    $('upnext').scrollIntoView({ block: 'start', behavior: calm ? 'auto' : 'smooth' });
+  });
+
+  var topBar = document.querySelector('.top');
+  addEventListener('scroll', function(){ topBar.classList.toggle('stuck', (window.scrollY || 0) > 4); }, { passive: true });
+
+  /* swipe left/right on the artwork for next/previous */
+  (function(){
+    var x0 = null, y0 = null;
+    var art = $('art');
+    art.addEventListener('touchstart', function(e){ x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; }, { passive: true });
+    art.addEventListener('touchend', function(e){
+      if(x0 === null) return;
+      var dx = e.changedTouches[0].clientX - x0, dy = e.changedTouches[0].clientY - y0;
+      x0 = y0 = null;
+      if(Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.6){
+        if(dx < 0) doNext(); else doPrev(true);
+      }
+    }, { passive: true });
+  })();
+
+  function removeAt(i){
+    if(!queue[i]) return;
+    var wasCur = i === idx, wasPlaying = playing;
+    queue.splice(i, 1);
+    if(sorder.length) sorder = sorder.filter(function(j){ return j !== i; }).map(function(j){ return j > i ? j - 1 : j; });
+    if(!queue.length){ clearQueue(); return; }
+    if(i < idx) idx--;
+    if(wasCur){
+      idx = -1;
+      var n = Math.min(i, queue.length - 1);
+      loadTrack(n, 0);
+      if(wasPlaying) tryPlay();
+    }
+    renderQueue(); save(); syncHashSoon();
+  }
+  function clearQueue(){
+    audio.pause();
+    audio.removeAttribute('src');
+    try { audio.load(); } catch(e){}
+    queue = []; idx = -1; sorder = []; pendingSeek = null;
+    clearErr(); hideGate(); qExpanded = false;
+    setPlayingUI(false);
+    renderQueue(); renderNow();
+    save(); clearHash();
+    if('mediaSession' in navigator){ try { navigator.mediaSession.metadata = null; navigator.mediaSession.playbackState = 'none'; } catch(e){} }
+    showEmpty();
+  }
+
+  /* ---------- sleep timer ---------- */
+  function setSleep(m, quiet){
+    sleepMode = m;
+    clearInterval(sleepTimer); sleepTimer = null;
+    if(typeof m === 'number'){ sleepEnd = Date.now() + m * 60000; sleepTimer = setInterval(checkSleep, 1000); }
+    renderSleep();
+    if(!quiet) toast(m === 'off' ? 'Sleep timer off' : m === 'end' ? 'Pausing at the end of this track' : 'Pausing in ' + m + ' minutes');
+  }
+  function checkSleep(){
+    if(typeof sleepMode !== 'number') return;
+    if(Date.now() >= sleepEnd){
+      audio.pause(); setSleep('off', true);
+      toast('Sleep timer ended. Playback paused.');
+    } else renderSleep();
+  }
+  function renderSleep(){
+    var chip = $('slp'), label, aria;
+    if(typeof sleepMode === 'number'){ label = fmt(Math.max(0, (sleepEnd - Date.now()) / 1000)); aria = 'Sleep timer: ' + label + ' left'; }
+    else if(sleepMode === 'end'){ label = 'End of track'; aria = 'Sleep timer: end of track'; }
+    else { label = 'Sleep'; aria = 'Sleep timer: off'; }
+    $('slpl').textContent = label;
+    chip.classList.toggle('on', sleepMode !== 'off');
+    chip.setAttribute('aria-label', aria);
+    $('sleepmeta').textContent = sleepMode === 'off' ? 'Off' : (typeof sleepMode === 'number' ? label + ' left' : 'End of track');
+    [].forEach.call(document.querySelectorAll('#sleepopts .mi'), function(b){
+      b.setAttribute('aria-checked', String(b.getAttribute('data-sleep') === String(sleepMode)));
+    });
+  }
+  $('slp').addEventListener('click', function(){ renderSleep(); openOverlay($('sleepsheet')); });
+  [].forEach.call(document.querySelectorAll('#sleepopts .mi'), function(b){
+    b.addEventListener('click', function(){
+      var v = b.getAttribute('data-sleep');
+      setSleep(v === 'off' || v === 'end' ? v : parseInt(v, 10));
+      closeOverlay($('sleepsheet'));
+    });
+  });
+  $('sleepdone').addEventListener('click', function(){ closeOverlay($('sleepsheet')); });
+
+  /* ---------- sheets ---------- */
+  var lastFocus = null;
+  function openOverlay(el, focusEl){
+    lastFocus = document.activeElement;
+    el.classList.add('show');
+    document.body.classList.add('locked');
+    var f = focusEl || el.querySelector('.sheet');
+    if(f) try { f.focus({ preventScroll: true }); } catch(e){}
+  }
+  function closeOverlay(el){
+    el.classList.remove('show');
+    if(!document.querySelector('.overlay.show') && !gateUp) document.body.classList.remove('locked');
+    if(lastFocus && lastFocus.focus) try { lastFocus.focus({ preventScroll: true }); } catch(e){}
+  }
+  [].forEach.call(document.querySelectorAll('.overlay'), function(o){
+    o.addEventListener('click', function(e){ if(e.target === o) closeOverlay(o); });
+  });
+  document.addEventListener('keydown', function(e){
+    if(e.key !== 'Escape') return;
+    var open = document.querySelectorAll('.overlay.show');
+    if(open.length) closeOverlay(open[open.length - 1]);
+    else if($('scan').classList.contains('show')) stopScan();
+  });
+
+  var sheetLink = null, clearArmed = false;
+  function openSheet(addMode){
+    clearArmed = false;
+    $('hclearl').textContent = 'Clear queue';
+    var empty = !queue.length;
+    $('hshare').disabled = $('hexp').disabled = $('hclear').disabled = empty;
+    $('addsec').hidden = !addMode;
+    $('urlin').value = ''; $('addbtn').disabled = true;
+    sheetLink = null;
+    if(!empty) encodeFragment(queue, idx, curPos()).then(function(f){ sheetLink = location.origin + location.pathname + '#' + f; });
+    openOverlay($('sheet'), addMode ? $('urlin') : null);
+  }
+  $('more').addEventListener('click', function(){ openSheet(false); });
+  $('sheetdone').addEventListener('click', function(){ closeOverlay($('sheet')); });
+  $('hadd').addEventListener('click', function(){ $('addsec').hidden = false; $('urlin').focus(); });
+  $('urlin').addEventListener('input', function(){
+    var v = $('urlin').value.trim(), ok = false;
+    try { ok = isHttp(v) && !!new URL(v).hostname; } catch(e){}
+    $('addbtn').disabled = !ok;
+  });
+  $('addsec').addEventListener('submit', function(e){
+    e.preventDefault();
+    if($('addbtn').disabled) return;
+    if(addUrl($('urlin').value)) { $('urlin').value = ''; $('addbtn').disabled = true; closeOverlay($('sheet')); }
+  });
+  $('hshare').addEventListener('click', function(){
+    var go = function(url){ copyLink(url); closeOverlay($('sheet')); };
+    if(sheetLink) go(sheetLink);
+    else encodeFragment(queue, idx, curPos()).then(function(f){ go(location.origin + location.pathname + '#' + f); });
+  });
+  $('hexp').addEventListener('click', function(){ exportQueue(); closeOverlay($('sheet')); });
+  $('himp').addEventListener('click', function(){ closeOverlay($('sheet')); pickFile(); });
+  $('hclear').addEventListener('click', function(){
+    if(!clearArmed){ clearArmed = true; $('hclearl').textContent = 'Tap again to clear ' + plural(queue.length, 'track'); return; }
+    closeOverlay($('sheet'));
+    clearQueue();
+    toast('Queue cleared');
+  });
+  $('hscan').addEventListener('click', function(){ closeOverlay($('sheet')); startScan(); });
+
+  function copyLink(url){
+    var fallback = function(){
+      if(navigator.share) navigator.share({ title: 'Audio queue', url: url }).catch(function(){});
+      else window.prompt('Copy this link', url);
+    };
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(url)
+        .then(function(){ toast('Link copied. Keep it somewhere to restore this queue later.'); }, fallback);
+    } else fallback();
+  }
   function download(name, content, type){
-    var blob = new Blob([content], { type: type });
     var a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
+    a.href = URL.createObjectURL(new Blob([content], { type: type }));
     a.download = name;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(function(){ URL.revokeObjectURL(a.href); }, 10000);
   }
-
   function exportQueue(){
-    if(!queue.length){ toast('Queue is empty'); return; }
+    if(!queue.length){ toast('The queue is empty'); return; }
     download('audio-queue-' + Date.now() + '.json',
       JSON.stringify({ exported: new Date().toISOString(),
-        tracks: queue.map(function(t){ return { title: t.title, url: t.url }; }) }, null, 2),
+        tracks: queue.map(function(t){ return { title: t.title, url: t.url, site: t.site || undefined }; }) }, null, 2),
       'application/json');
-    toast('Exported ' + queue.length + ' tracks');
+    toast('Exported ' + plural(queue.length, 'track'));
   }
-
-  function shareLink(){
-    if(!queue.length){ toast('Queue is empty'); return; }
-    var url = queueLink();
-    // The share sheet is the natural phone gesture — it lets you drop the link
-    // straight into Notes or send it to yourself. Clipboard is the fallback.
-    if(navigator.share){
-      navigator.share({ title: 'Audio queue', url: url })
-        .catch(function(){ copyLink(url); });
-    } else {
-      copyLink(url);
-    }
-  }
-  function copyLink(url){
-    if(navigator.clipboard && navigator.clipboard.writeText){
-      navigator.clipboard.writeText(url)
-        .then(function(){ toast('Link copied — save it to restore this queue'); })
-        .catch(function(){ toast('Could not copy link'); });
-    } else {
-      toast('Copying is not available here');
-    }
-  }
-
-  // Adds without disturbing what is currently playing, and dedupes by url.
   function importTracks(list){
-    var added = 0;
-    list.forEach(function(t){
-      if(!t || typeof t.url !== 'string' || !/^https?:\/\//i.test(t.url)) return;
-      if(queue.some(function(x){ return x.url === t.url; })) return;
-      queue.push({ title: t.title || t.url.split('/').pop().split('?')[0] || 'Untitled', url: t.url });
-      added++;
-    });
+    var wasEmpty = idx < 0, before = queue.length;
+    var added = merge(list);
     if(!added) return 0;
-    $('empty').style.display = 'none';
-    $('recv').style.display  = 'none';
-    $('app').style.display   = 'flex';
-    renderQueue();
-    save();
-    syncHash();
-    if(idx < 0) play(0);           // nothing was loaded, so start the first one
+    showApp();
+    if(wasEmpty){ activated = true; begin(before, 0); }
+    syncHashSoon();
     return added;
   }
-
   function importFile(file){
     var reader = new FileReader();
     reader.onload = function(ev){
       var text = String(ev.target.result || ''), n = 0;
-      // JSON first: either our export shape, or a bare array of tracks.
       try {
         var json = JSON.parse(text);
         var arr = Array.isArray(json) ? json : (json && json.tracks);
         if(Array.isArray(arr)) n = importTracks(arr);
-        if(n){ toast('Imported ' + n + ' tracks'); return; }
+        if(n){ toast('Imported ' + plural(n, 'track')); return; }
       } catch(e){}
-      // M3U keeps the title on the #EXTINF line above its url.
       if(/#EXTM3U|#EXTINF/.test(text) || /\.m3u8?$/i.test(file.name)){
         var out = [], title = null;
         text.split(/\r?\n/).forEach(function(line){
@@ -719,259 +1783,154 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
           out.push({ title: title, url: line }); title = null;
         });
         n = importTracks(out);
-        if(n){ toast('Imported ' + n + ' tracks'); return; }
+        if(n){ toast('Imported ' + plural(n, 'track')); return; }
       }
-      // Otherwise treat it as a plain list of urls, one per line.
       n = importTracks(text.split(/\r?\n/).map(function(l){ return { url: l.trim() }; }));
-      toast(n ? ('Imported ' + n + ' tracks') : 'Nothing importable in that file');
+      toast(n ? 'Imported ' + plural(n, 'track') : 'Nothing in that file could be imported');
     };
     reader.readAsText(file);
   }
-
-  /* ---------- rendering ---------- */
-  function renderQueue(){
-    var q = $('q');
-    $('qc').textContent = queue.length;
-    $('hc').textContent = queue.length;
-    q.innerHTML = '';
-    queue.forEach(function(t, i){
-      var d = document.createElement('div');
-      d.className = 'qi' + (i === idx ? ' on' : '');
-      var ext = (t.url.split('?')[0].split('.').pop() || '').slice(0,4);
-      var n = document.createElement('span'); n.className = 'qi-n'; n.textContent = i+1;
-      var nm = document.createElement('span'); nm.className = 'qi-name'; nm.textContent = t.title;
-      var x = document.createElement('span'); x.className = 'qi-x'; x.textContent = ext;
-      d.appendChild(n); d.appendChild(nm); d.appendChild(x);
-      d.addEventListener('click', function(){ play(i); });
-      q.appendChild(d);
-    });
-    var active = q.querySelector('.on');
-    if(active && $('q').classList.contains('open')) active.scrollIntoView({ block:'nearest' });
-  }
-
-  function setPlayingUI(on){
-    playing = on;
-    $('pp').innerHTML = on ? ICON_PAUSE : ICON_PLAY;
-    $('pp').setAttribute('aria-label', on ? 'Pause' : 'Play');
-    $('art').classList.toggle('on', on);
-  }
-
-  /* ---------- playback ---------- */
-  function play(i, resumeAt){
-    if(i < 0 || i >= queue.length) return;
-    idx = i;
-    var t = queue[idx];
-
-    if(audio){ audio.pause(); audio.removeAttribute('src'); audio.load(); }
-
-    $('nt').textContent = t.title;
-    $('ns').textContent = t.url.replace(/^https?:\/\//,'').slice(0,54);
-    $('err').classList.remove('show');
-    $('sf').style.width = '0%';
-    $('tc').textContent = '0:00';
-    $('td').textContent = '--:--';
-
-    audio = new Audio();
-    audio.preload = 'metadata';
-    audio.src = t.url;
-
-    audio.addEventListener('loadedmetadata', function(){
-      $('td').textContent = fmt(audio.duration);
-      if(resumeAt && resumeAt < audio.duration - 2){
-        try { audio.currentTime = resumeAt; } catch(e){}
-      }
-    });
-    audio.addEventListener('timeupdate', function(){
-      if(seeking) return;
-      $('tc').textContent = fmt(audio.currentTime);
-      if(isFinite(audio.duration) && audio.duration > 0)
-        $('sf').style.width = (audio.currentTime / audio.duration * 100) + '%';
-      // Keep the resume point fresh. Previously position was only written on a
-      // track change or when the page was hidden, so a tab the OS discarded
-      // mid-track resumed from wherever the last save happened to land.
-      saveSoon();
-    });
-    audio.addEventListener('ended', function(){
-      setPlayingUI(false);
-      if(looping){ play(idx); }
-      else if(shuffling && queue.length > 1){
-        var n; do { n = Math.floor(Math.random()*queue.length); } while(n === idx);
-        play(n);
-      }
-      else if(idx < queue.length - 1){ play(idx + 1); }
-      else { save(); }
-    });
-    audio.addEventListener('error', function(){
-      $('err').textContent = 'Could not load this track. The link may have expired or be restricted to your computer.';
-      $('err').classList.add('show');
-      setPlayingUI(false);
-    });
-    audio.addEventListener('play',  function(){ setPlayingUI(true);  });
-    audio.addEventListener('pause', function(){ setPlayingUI(false); });
-
-    audio.play().then(function(){
-      $('gate').classList.remove('show');
-    }).catch(function(){
-      // Mobile browsers require a gesture before audio can start
-      $('gate').classList.add('show');
-      $('gatetxt').textContent = 'Tap to play "' + t.title.slice(0,42) + '"';
-    });
-
-    renderQueue();
-    save();
-    setMedia(t);
-  }
-
-  function toggle(){
-    if(!audio){ if(queue.length) play(0); return; }
-    if(playing) audio.pause(); else audio.play().catch(function(){ $('gate').classList.add('show'); });
-    save();
-  }
-
-  function setMedia(t){
-    if(!('mediaSession' in navigator)) return;
-    try {
-      navigator.mediaSession.metadata = new MediaMetadata({ title: t.title, artist: 'Audio Player' });
-      navigator.mediaSession.setActionHandler('play',  function(){ if(audio) audio.play(); });
-      navigator.mediaSession.setActionHandler('pause', function(){ if(audio) audio.pause(); });
-      navigator.mediaSession.setActionHandler('previoustrack', function(){ if(idx > 0) play(idx-1); });
-      navigator.mediaSession.setActionHandler('nexttrack', function(){ if(idx < queue.length-1) play(idx+1); });
-    } catch(e){}
-  }
-
-  /* ---------- seek (tap + drag) ---------- */
-  function seekTo(clientX){
-    if(!audio || !isFinite(audio.duration) || audio.duration <= 0) return;
-    var r = $('seek').getBoundingClientRect();
-    var p = Math.max(0, Math.min(1, (clientX - r.left) / r.width));
-    $('sf').style.width = (p*100) + '%';
-    $('tc').textContent = fmt(p * audio.duration);
-    return p * audio.duration;
-  }
-  $('seek').addEventListener('pointerdown', function(e){
-    seeking = true; $('seek').setPointerCapture(e.pointerId); seekTo(e.clientX);
+  function pickFile(){ $('hfile').click(); }
+  $('hfile').addEventListener('change', function(e){
+    var f = e.target.files && e.target.files[0];
+    if(f) importFile(f);
+    e.target.value = '';
   });
-  $('seek').addEventListener('pointermove', function(e){ if(seeking) seekTo(e.clientX); });
-  $('seek').addEventListener('pointerup', function(e){
-    if(!seeking) return;
-    var t = seekTo(e.clientX);
-    seeking = false;
-    if(audio && t != null){ try { audio.currentTime = t; } catch(err){} }
-    save();
-  });
+  function addUrl(str){
+    var u = String(str || '').trim();
+    if(!u) return 0;
+    if(!isHttp(u)){ toast('That needs to be an http or https link'); return 0; }
+    var n = importTracks([{ url: u, title: nameFromUrl(u) || 'Audio link' }]);
+    toast(n ? 'Added to the queue' : 'Already in your queue');
+    return n;
+  }
 
-  /* ---------- controls ---------- */
-  $('pp').addEventListener('click', toggle);
-  $('prev').addEventListener('click', function(){
-    if(audio && audio.currentTime > 3){ audio.currentTime = 0; return; }
-    if(idx > 0) play(idx - 1);
-  });
-  $('next').addEventListener('click', function(){ if(idx < queue.length - 1) play(idx + 1); });
-  $('lp').addEventListener('click', function(){
-    looping = !looping; $('lp').classList.toggle('on', looping);
-    toast(looping ? 'Repeat on' : 'Repeat off');
-  });
-  $('shuf').addEventListener('click', function(){
-    shuffling = !shuffling; $('shuf').classList.toggle('on', shuffling);
-    toast(shuffling ? 'Shuffle on' : 'Shuffle off');
-  });
-  $('qbar').addEventListener('click', function(){
-    var open = $('q').classList.toggle('open');
-    $('qbar').classList.toggle('open', open);
-    if(open){
-      var a = $('q').querySelector('.on');
-      if(a) a.scrollIntoView({ block:'nearest' });
+  /* ---------- incoming queues ---------- */
+  // r: a completed ingest. Merges, then starts where the computer was.
+  function applyIncoming(r, o){
+    o = o || {};
+    var before = queue.length;
+    var added = merge(r.tracks);
+    var t = r.cur ? findUrl(r.cur) : -1, pos = t >= 0 ? (+r.p || 0) : 0;
+    // No "now playing" on the computer (or an old v1 link): start with what
+    // just arrived, unless it was all here already.
+    if(t < 0 && added) t = findUrl(r.tracks[0].url);
+    var sum = { kind: 'handoff', count: r.tracks.length, added: added, existing: before };
+    if(o.boot){
+      if(t < 0){ if(o.saved){ t = clampIdx(o.saved.idx); pos = +o.saved.pos || 0; } else t = 0; }
+      begin(t, pos, sum);
+    } else {
+      showApp();
+      if(t >= 0 && t !== idx){ activated = true; begin(t, pos, sum); }
+      else if(t >= 0 && pos > 0) seekAbs(pos);
+      if(added) toast('Added ' + plural(added, 'track'));
+      else if(t < 0) toast('Already in your queue');
     }
-  });
-  $('gatebtn').addEventListener('click', function(){
-    $('gate').classList.remove('show');
-    if(audio) audio.play().catch(function(){});
-    else if(queue.length) play(0);
-  });
+    syncHashSoon();
+  }
+  function handleLive(inc){
+    if(!inc) return false;
+    if(inc.bad || !inc.tracks.length){ toast("Couldn't read that link. Send it again from your computer."); return false; }
+    var r = ingest(inc);
+    if(!r.done){ showProgress(r); return true; }
+    if($('recv').classList.contains('show')) closeOverlay($('recv'));
+    applyIncoming(r, {});
+    return true;
+  }
 
-  /* swipe left/right on the artwork for prev/next */
-  (function(){
-    var x0 = null, y0 = null;
-    var art = $('art');
-    art.addEventListener('touchstart', function(e){
-      x0 = e.touches[0].clientX; y0 = e.touches[0].clientY;
-    }, { passive:true });
-    art.addEventListener('touchend', function(e){
-      if(x0 === null) return;
-      var dx = e.changedTouches[0].clientX - x0;
-      var dy = e.changedTouches[0].clientY - y0;
-      if(Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy)*1.6){
-        if(dx < 0 && idx < queue.length - 1) play(idx + 1);
-        if(dx > 0 && idx > 0) play(idx - 1);
+  /* Progress card for a multi-part transfer. Back to player is always there:
+     the old screen hid the player until every code arrived, with no way back. */
+  function showProgress(r){
+    $('recvh').textContent = 'Got ' + r.have + ' of ' + plural(r.n, 'code');
+    var segs = $('recvsegs');
+    segs.innerHTML = '';
+    if(r.n <= 16){
+      for(var k = 1; k <= r.n; k++){
+        var s = document.createElement('span');
+        var have = r.got.indexOf(k) >= 0;
+        s.className = 'seg' + (have ? ' got' : '');
+        s.textContent = k;
+        s.setAttribute('aria-label', 'Code ' + k + (have ? ', received' : ', still needed'));
+        segs.appendChild(s);
       }
-      x0 = null; y0 = null;
-    }, { passive:true });
-  })();
+      segs.hidden = false;
+    } else segs.hidden = true;
+    var missing = [];
+    for(var m = 1; m <= r.n; m++) if(r.got.indexOf(m) < 0) missing.push(m);
+    var shown = missing.slice(0, 6).map(String);
+    if(missing.length > 6) shown.push(plural(missing.length - 6, 'more', 'more'));
+    $('recvp').textContent = 'Scan the next one with your camera. Still needed: ' + (missing.length === 1 ? 'code ' : 'codes ') + listWords(shown) + '.';
+    $('recvscan').hidden = !SCAN_OK;
+    if(!$('recv').classList.contains('show')) openOverlay($('recv'));
+  }
+  $('recvback').addEventListener('click', function(){ closeOverlay($('recv')); if(!queue.length) showEmpty(); });
+  $('recvscan').addEventListener('click', function(){ closeOverlay($('recv')); startScan(); });
 
-  window.addEventListener('pagehide', save);
-  document.addEventListener('visibilitychange', function(){ if(document.hidden) save(); });
+  /* Restore from a link copied earlier. The whole queue rides in the hash, so
+     this works even when site storage has been wiped. */
+  function importLink(str){
+    if(!str) return;
+    parseHandoff(str).then(function(inc){
+      if(!inc){ toast("That doesn't look like a queue link"); return; }
+      handleLive(inc);
+    });
+  }
+  function pasteLink(){
+    var ask = function(){ importLink(window.prompt('Paste the queue link') || ''); };
+    if(navigator.clipboard && navigator.clipboard.readText){
+      navigator.clipboard.readText().then(function(txt){
+        if(txt && /[#&](q|d)=/.test(txt)) importLink(txt); else ask();
+      }, ask);
+    } else ask();
+  }
+  $('elink').addEventListener('click', pasteLink);
+  $('eimp').addEventListener('click', pickFile);
+  $('eadd').addEventListener('click', function(){ openSheet(true); });
 
   /* ---------- continuous camera scanning ----------
-     The manual flow costs one scan and one click per code, which is fine for a
-     single code and miserable for six. Here the computer cycles its codes on a
-     timer and the phone keeps decoding, so a multi-part transfer is: hold the
-     phone up once, wait, done.
-
-     Uses the native BarcodeDetector — no decoder library, so nothing extra to
-     download. It is absent on iOS Safari, where the button stays hidden and the
-     existing scan-per-code flow remains. */
-  var scanStream = null, scanRAF = 0, scanning = false, scanSid = null;
-  var SCAN_OK = ('BarcodeDetector' in window) &&
-                !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
-
+     The computer cycles its codes; the phone keeps decoding, so a multi-part
+     transfer is one steady hold. Uses the native BarcodeDetector, so it is
+     offered only where that exists (not iOS Safari, which scans code by code
+     with the camera app and gets the progress card instead). */
+  var scanStream = null, scanRAF = 0, scanning = false, scanSid = null, scanSeen = {};
+  var SCAN_OK = ('BarcodeDetector' in window) && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
   function scanStatus(have, n){
     $('scancount').textContent = have + ' / ' + (n || '?');
     $('scanprogf').style.width = n ? Math.round(have / n * 100) + '%' : '0%';
-    if(n > 1) $('scantxt').textContent = 'Captured ' + have + ' of ' + n + '. Keep holding steady.';
+    if(n > 1) $('scantxt').textContent = 'Got ' + have + ' of ' + plural(n, 'code') + '. Keep holding steady.';
   }
-
   function stopScan(){
     scanning = false;
-    if(scanRAF) cancelAnimationFrame(scanRAF), scanRAF = 0;
+    if(scanRAF){ cancelAnimationFrame(scanRAF); scanRAF = 0; }
     if(scanStream){ scanStream.getTracks().forEach(function(t){ t.stop(); }); scanStream = null; }
     var v = $('scanvid');
     try { v.pause(); v.srcObject = null; } catch(e){}
     $('scan').classList.remove('show');
+    if(!queue.length) showEmpty();
   }
-
   function onScanned(text){
-    var inc = parseHandoff(text);
-    if(!inc) return;                                   // some other QR in frame
-    // Ignore a code from a different transfer once one is under way, so a stale
-    // code still on screen cannot corrupt the set being collected.
-    if(scanSid && inc.sid && inc.sid !== scanSid) return;
-    if(inc.sid) scanSid = inc.sid;
-
-    var r = ingest(inc);
-    if(!r) return;
-    scanStatus(r.have, r.n);
-    if(!r.done) return;
-
-    stopScan();
-    var added = receive(r.tracks);
-    toast(added ? ('Added ' + added + ' track' + (added > 1 ? 's' : ''))
-                : 'Already in your queue');
+    if(scanSeen[text]) return;
+    scanSeen[text] = 1;
+    parseHandoff(text).then(function(inc){
+      if(!inc || inc.bad || !inc.tracks || !inc.tracks.length || !scanning) return;
+      // A code from a different transfer cannot corrupt the set under way.
+      if(scanSid && inc.sid && inc.sid !== scanSid) return;
+      if(inc.sid) scanSid = inc.sid;
+      var r = ingest(inc);
+      scanStatus(r.have, r.n);
+      if(!r.done) return;
+      stopScan();
+      applyIncoming(r, {});
+    });
   }
-
   function startScan(){
-    if(!SCAN_OK){ toast('This browser cannot scan — use the QR link instead'); return; }
-    scanSid = null;
+    if(!SCAN_OK){ toast("This browser can't scan here. Use your camera app on each code instead."); return; }
+    scanSid = null; scanSeen = {};
     $('scan').classList.add('show');
-    $('scantxt').textContent = 'Point at your computer screen. Keep it steady — the codes cycle on their own.';
+    $('scantxt').textContent = 'Point at your computer screen and hold steady. The codes change on their own.';
     scanStatus(0, 0);
-
     navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-      .then(function(stream){
-        scanStream = stream;
-        var v = $('scanvid');
-        v.srcObject = stream;
-        return v.play();
-      })
+      .then(function(stream){ scanStream = stream; var v = $('scanvid'); v.srcObject = stream; return v.play(); })
       .then(function(){
         var det = new window.BarcodeDetector({ formats: ['qr_code'] });
         var v = $('scanvid'), busy = false;
@@ -979,217 +1938,84 @@ html,body{width:100%;max-width:100%;overflow-x:hidden}
         var tick = function(){
           if(!scanning) return;
           scanRAF = requestAnimationFrame(tick);
-          // detect() is async; skip frames while one is in flight rather than
-          // queueing them up behind a slow decode.
           if(busy || v.readyState < 2) return;
           busy = true;
-          det.detect(v)
-            .then(function(codes){
-              busy = false;
-              for(var i = 0; i < codes.length && scanning; i++) onScanned(codes[i].rawValue);
-            })
-            .catch(function(){ busy = false; });
+          det.detect(v).then(function(codes){
+            busy = false;
+            for(var i = 0; i < codes.length && scanning; i++) onScanned(codes[i].rawValue);
+          }, function(){ busy = false; });
         };
         tick();
       })
       .catch(function(err){
         stopScan();
-        toast(err && err.name === 'NotAllowedError'
-          ? 'Camera permission denied'
-          : 'Could not open the camera');
+        toast(err && err.name === 'NotAllowedError' ? 'Camera permission was denied. Allow it in your browser settings to scan.' : "Couldn't open the camera");
       });
   }
-
-  function pickFile(){ $('hfile').click(); }
-
-  /* Restore from a link that was copied earlier. The whole queue rides in the
-     hash, so this works even when site storage has been wiped — which is the
-     situation the empty screen exists for. */
-  function importLink(str){
-    if(!str) return;
-    var m = String(str).match(/[#&]q=([A-Za-z0-9\-_]+)/);
-    if(!m){ toast('That does not look like a queue link'); return; }
-    var parsed = null;
-    try {
-      var obj = JSON.parse(unb64url(m[1]));
-      var base = obj.b || '';
-      parsed = (obj.t || []).map(function(p){ return { title: p[0] || null, url: base + p[1] }; });
-    } catch(e){ parsed = null; }
-    if(!parsed || !parsed.length){ toast('Could not read that link'); return; }
-    var n = receive(parsed);
-    toast(n ? ('Added ' + n + ' track' + (n > 1 ? 's' : '')) : 'Already in your queue');
-  }
-
-  function pasteLink(){
-    // Clipboard read needs permission and can be refused; prompt always works.
-    if(navigator.clipboard && navigator.clipboard.readText){
-      navigator.clipboard.readText()
-        .then(function(txt){
-          if(txt && /[#&]q=/.test(txt)) importLink(txt);
-          else importLink(window.prompt('Paste the queue link') || '');
-        })
-        .catch(function(){ importLink(window.prompt('Paste the queue link') || ''); });
-    } else {
-      importLink(window.prompt('Paste the queue link') || '');
-    }
-  }
-
-  $('hshare').onclick = shareLink;
-  $('hexp').onclick   = exportQueue;
-  $('himp').onclick   = pickFile;
-  $('eimp').onclick   = pickFile;      // same action, reachable from the empty screen
-  $('elink').onclick  = pasteLink;
-  $('escan').onclick  = startScan;
-  $('scanx').onclick  = stopScan;
-  // Only offer scanning where it can actually work.
-  if(SCAN_OK){
-    $('escan').style.display   = 'block';
-    $('hscan').style.display   = 'flex';    // adding more while a queue is loaded
-    $('recvscan').style.display = 'block';  // rescuing a half-finished transfer
-  }
-  $('hscan').onclick    = startScan;
-  $('recvscan').onclick = startScan;
+  $('escan').addEventListener('click', startScan);
+  $('scanx').addEventListener('click', stopScan);
+  if(SCAN_OK){ $('escan').hidden = false; $('hscan').hidden = false; }
   addEventListener('pagehide', stopScan);
-  $('hfile').onchange = function(e){
-    var f = e.target.files && e.target.files[0];
-    if(f) importFile(f);
-    e.target.value = '';        // let the same file be picked again
-  };
 
-  /* ---------- add one track by URL ---------- */
-  /* The popup on the PC has always had this; the phone could only receive a
-     queue, import a file, or restore from a queue link — there was no way to
-     put in a single link you happened to have.
+  /* ---------- background save ---------- */
+  window.addEventListener('pagehide', save);
+  document.addEventListener('visibilitychange', function(){ if(document.hidden){ save(); syncHash(); } });
 
-     Everything after validation goes through importTracks, which already
-     dedupes by url, flips the empty screen over to the player, re-renders,
-     saves, keeps the hash in sync, and starts playing when nothing was
-     loaded. Duplicating any of that here is how the two paths drift. */
-  function addUrl(str){
-    var u = String(str || '').trim();
-    if(!u) return 0;
-    // importTracks silently drops anything that is not http(s), so catch it
-    // here where there is still a user to tell.
-    if(!/^https?:\/\//i.test(u)){ toast('That needs to be an http or https link'); return 0; }
-    var name = '';
-    try {
-      name = decodeURIComponent(u.split('/').pop().split('?')[0]).slice(0, 60);
-    } catch(e){
-      name = '';                 // a malformed %-escape should not lose the track
+  /* ---------- boot ----------
+     Restore what was saved, then apply any incoming link on top. A plain reload
+     carries this page's own hash (&o=1): restore silently, never toast. */
+  function boot(){
+    xferSweep();
+    var saved = load();
+    if(saved){
+      shuffling = !!saved.shuffle;
+      repeat = /^(off|all|one)$/.test(saved.repeat) ? saved.repeat : 'off';
+      rate = SPEEDS.indexOf(saved.rate) >= 0 ? saved.rate : 1;
     }
-    var n = importTracks([{ url: u, title: name || 'Custom URL' }]);
-    toast(n ? 'Added' : 'Already in your queue');
-    return n;
-  }
-
-  $('hadd').onclick = function(){
-    var open = $('addsec').classList.toggle('open');
-    if(open) $('urlin').focus();
-  };
-  $('addbtn').onclick = function(){
-    if(addUrl($('urlin').value)){
-      $('urlin').value = '';
-      $('addsec').classList.remove('open');   // done with it; give the space back
-    }
-  };
-  $('urlin').addEventListener('keydown', function(e){
-    if(e.key === 'Enter') $('addbtn').click();
-  });
-  /* From the empty screen there is no input to reveal, because #app — and the
-     header holding the + — is display:none until something is queued. Prompt
-     instead, the same fallback pasteLink uses. */
-  $('eadd').onclick = function(){ addUrl(window.prompt('Paste the audio URL') || ''); };
-
-  /* ---------- boot ---------- */
-  /* Merge an incoming handoff into whatever is already on the phone.
-
-     start() replaces the queue outright, which is right when restoring a saved
-     session but wrong for a scan: sending "a few more" from the PC silently
-     threw away everything already here. Receiving now appends, dedupes by url,
-     and leaves the currently-playing track alone. */
-  function receive(list){
-    var added = 0;
-    list.forEach(function(t){
-      if(!t || typeof t.url !== 'string' || !/^https?:\/\//i.test(t.url)) return;
-      if(queue.some(function(x){ return x.url === t.url; })) return;
-      queue.push({
-        title: t.title || (function(){
-          try { return decodeURIComponent(t.url.split('/').pop().split('?')[0]).slice(0,70) || 'Untitled'; }
-          catch(e){ return 'Untitled'; }
-        })(),
-        url: t.url
-      });
-      added++;
-    });
-    $('empty').style.display = 'none';
-    $('recv').style.display  = 'none';
-    $('app').style.display   = 'flex';
-    renderQueue();
-    save();
-    syncHash();                            // carry it in the URL too
-    if(idx < 0 && queue.length) play(0);   // nothing was playing, so begin
-    return added;
-  }
-
-  function start(list, startIdx, startPos){
-    queue = list;
-    $('empty').style.display = 'none';
-    $('recv').style.display = 'none';
-    $('app').style.display = 'flex';
-    renderQueue();
-    syncHash();
-    var i = (typeof startIdx === 'number' && startIdx >= 0 && startIdx < list.length) ? startIdx : 0;
-    play(i, startPos);
-  }
-
-  xferSweep();
-
-  /* Restore FIRST, then apply any incoming code on top.
-
-     The old order handed the hash to handleIncoming and only fell back to the
-     saved queue if there was nothing to import. Two ways that lost your queue:
-     a scan replaced it outright, and an incomplete multi-part transfer returned
-     true while showing "Receiving…", so the saved queue was never loaded and the
-     player stayed hidden behind that panel with no way back to it. Loading the
-     saved queue up front means an incoming code now merges into it. */
-  var saved = load();
-  var restored = false;
-  if(saved && saved.queue && saved.queue.length){
-    start(saved.queue, saved.idx, saved.pos);
-    restored = true;
-  }
-  var got = handleIncoming(readHash());
-  if(!restored && !got){
-    $('empty').style.display = 'flex';
-    $('app').style.display = 'none';
-    // Land on the empty screen with the reason visible, rather than making the
-    // user guess whether the queue was lost or never saved in the first place.
-    var probe = storageProbe();
-    var stored = 0;
-    try { var raw = localStorage.getItem(STORE); stored = raw ? (JSON.parse(raw).queue || []).length : 0; } catch(e){}
-    var d = $('diag');
-    if(d){
-      var line = 'storage: ' + probe + ' · saved queue: ' + stored + ' tracks'
-               + (saveErr ? ' · last write failed: ' + saveErr : '');
-      // Writes work but nothing survived: the browser is clearing site data
-      // between visits rather than rejecting it. Say so, since the remedy is a
-      // browser setting and not something the page can fix on its own.
-      if(probe === 'ok' && !stored){
-        line += '\n\nYour browser accepted the save and then cleared it. In Brave '
-              + 'this is Forget by default — turn it off for this site in Shields, '
-              + 'or add the page to your home screen. Until then, keep a queue '
-              + 'link and use Paste a queue link above.';
+    renderChips();
+    setPlayingUI(false);
+    var had = saved && Array.isArray(saved.queue) && saved.queue.length ? saved : null;
+    (location.hash ? parseHandoff(location.hash) : Promise.resolve(null)).then(function(inc){
+      if(inc && inc.own){
+        if(had){ setQueue(had.queue); begin(had.idx, had.pos, { kind: 'restore' }); return; }
+        if(!inc.bad && inc.tracks.length){ setQueue(inc.tracks); begin(inc.i >= 0 ? inc.i : 0, inc.p, { kind: 'restore' }); return; }
+        clearHash(); showEmpty(); return;
       }
-      d.style.whiteSpace = 'pre-line';
-      d.textContent = line;
-      d.style.display = 'block';
-    }
+      if(inc) clearHash();       // a reload must never re-import this
+      if(had) setQueue(had.queue);
+      if(inc && !inc.bad && inc.tracks.length){
+        var r = ingest(inc);
+        if(r.done){ applyIncoming(r, { boot: true, saved: had }); return; }
+        if(queue.length) begin(had.idx, had.pos, { kind: 'restore' }); else showEmpty();
+        showProgress(r);
+        return;
+      }
+      if(inc && inc.bad) toast("Couldn't read that link. Send it again from your computer.");
+      if(queue.length) begin(had.idx, had.pos, { kind: 'restore' }); else showEmpty();
+    });
   }
 
   // A later scan while this page is still open (same tab, hash-only change).
   window.addEventListener('hashchange', function(){
-    handleIncoming(readHash());
+    parseHandoff(location.hash).then(function(inc){
+      if(!inc || inc.own) return;
+      clearHash();
+      handleLive(inc);
+    });
   });
+
+  // Read-only snapshot for the test harness.
+  window.__afpm = {
+    state: function(){
+      return { queue: queue.map(function(t){ return { title: t.title, url: t.url, site: t.site, dead: t.dead || null }; }),
+        idx: idx, pos: audio.currentTime, paused: audio.paused, src: audio.getAttribute('src'), rate: audio.playbackRate,
+        shuffling: shuffling, order: shuffling ? order().slice() : null, repeat: repeat, sleep: sleepMode,
+        gate: gateUp, activated: activated, upnext: upcoming(3) };
+    },
+    inflateRaw: inflateRaw
+  };
+
+  boot();
 })();
 </script>
 </body>
